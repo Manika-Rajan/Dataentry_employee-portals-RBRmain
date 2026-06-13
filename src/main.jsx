@@ -412,7 +412,7 @@ const cognitoAuthConfig = {
   client_id: '7km97qil933t8gpe30gl4e9is9',
   redirect_uri: 'https://main.d399lp2wrw5lfc.amplifyapp.com/',
   response_type: 'code',
-  scope: 'openid email profile',
+  scope: 'openid email',
 };
 
 createRoot(document.getElementById('root')).render(
