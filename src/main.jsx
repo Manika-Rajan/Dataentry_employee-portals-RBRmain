@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AuthProvider, useAuth } from 'react-oidc-context';
 import { Save, Search, Plus, Database, ShieldCheck, RefreshCw, Pencil, Upload, XCircle } from 'lucide-react';
 import './styles.css';
 
@@ -91,13 +92,23 @@ async function apiFetch(path, options = {}) {
       ...(options.headers || {}),
     },
   });
+
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.message || `Request failed with ${res.status}`);
   return data;
 }
 
-function App() {
-  const [employeeName, setEmployeeName] = useState(localStorage.getItem('rbr_employee_name') || '');
+function PortalApp() {
+  const auth = useAuth();
+
+  const employeeEmail = auth.user?.profile?.email || '';
+  const employeeDisplayName =
+    auth.user?.profile?.name ||
+    employeeEmail ||
+    localStorage.getItem('rbr_employee_name') ||
+    '';
+
+  const [employeeName, setEmployeeName] = useState(employeeDisplayName);
   const [form, setForm] = useState(emptyForm);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
@@ -107,6 +118,13 @@ function App() {
 
   const isEditing = Boolean(form.company_id);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
+
+  function signOutRedirect() {
+    const clientId = '7km97qil933t8gpe30gl4e9is9';
+    const logoutUri = 'https://main.d399lp2wrw5lfc.amplifyapp.com/';
+    const cognitoDomain = 'https://ap-south-1ixh4ujl1x.auth.ap-south-1.amazoncognito.com';
+    window.location.href = `${cognitoDomain}/logout?client_id=${clientId}&logout_uri=${encodeURIComponent(logoutUri)}`;
+  }
 
   function setField(name, value) {
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -128,15 +146,28 @@ function App() {
 
     localStorage.setItem('rbr_employee_name', employeeName.trim());
     setSaving(true);
+
     try {
-      const payload = buildPayload(form, employeeName.trim());
-      const path = isEditing ? `/export-companies/${encodeURIComponent(form.company_id)}` : '/export-companies';
+      const payload = {
+        ...buildPayload(form, employeeName.trim()),
+        employee_email: employeeEmail,
+      };
+
+      const path = isEditing
+        ? `/export-companies/${encodeURIComponent(form.company_id)}`
+        : '/export-companies';
+
       const method = isEditing ? 'PUT' : 'POST';
       const data = await apiFetch(path, { method, body: JSON.stringify(payload) });
+
       setStatus(isEditing ? 'Company updated successfully.' : 'Company saved successfully. You can enter the next company now.');
+
       if (isEditing) {
-        setResults((prev) => prev.map((x) => x.company_id === data.item.company_id ? data.item : x));
+        setResults((prev) =>
+          prev.map((x) => (x.company_id === data.item.company_id ? data.item : x))
+        );
       }
+
       setForm(emptyForm);
     } catch (err) {
       setStatus(err.message || 'Save failed.');
@@ -148,13 +179,16 @@ function App() {
   async function searchCompanies() {
     setLoading(true);
     setStatus('');
+
     try {
       const params = new URLSearchParams();
       if (query.country) params.set('country', query.country);
       if (query.product) params.set('product', query.product);
       if (query.text) params.set('q', query.text);
+
       const data = await apiFetch(`/export-companies?${params.toString()}`);
       setResults(data.items || []);
+
       if (!data.items?.length) setStatus('No matching companies found.');
     } catch (err) {
       setStatus(err.message || 'Search failed.');
@@ -164,7 +198,13 @@ function App() {
   }
 
   function editCompany(item) {
-    setForm({ ...emptyForm, ...item, product: item.product || item.product_category || '', priority: String(item.priority || 3) });
+    setForm({
+      ...emptyForm,
+      ...item,
+      product: item.product || item.product_category || '',
+      priority: String(item.priority || 3),
+    });
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setStatus(`Editing: ${item.company_name}`);
   }
@@ -180,19 +220,43 @@ function App() {
         <div>
           <p className="eyebrow">Rajan Business Reports</p>
           <h1>Export Company Data Entry Portal</h1>
-          <p className="subtext">Enter, search, and update verified importers, sourcing agents, distributors, wholesalers, buying houses, and retail chains for RBR instant reports.</p>
+          <p className="subtext">
+            Enter, search, and update verified importers, sourcing agents, distributors,
+            wholesalers, buying houses, and retail chains for RBR instant reports.
+          </p>
         </div>
-        <div className="badge"><ShieldCheck size={18}/> Employee Portal</div>
+
+        <div>
+          <div className="badge">
+            <ShieldCheck size={18} /> {employeeEmail || 'Employee Portal'}
+          </div>
+          <button type="button" className="ghost" onClick={signOutRedirect} style={{ marginTop: 10 }}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       <main className="layout">
         <section className="card form-card">
           <div className="section-head">
-            <div className="card-title"><Database size={20}/> {isEditing ? 'Edit company' : 'Add company'}</div>
-            {isEditing && <button type="button" className="ghost" onClick={newCompany}><XCircle size={17}/> Cancel edit</button>}
+            <div className="card-title">
+              <Database size={20} /> {isEditing ? 'Edit company' : 'Add company'}
+            </div>
+            {isEditing && (
+              <button type="button" className="ghost" onClick={newCompany}>
+                <XCircle size={17} /> Cancel edit
+              </button>
+            )}
           </div>
 
-          <label className="employee-label">Employee name<input value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} placeholder="Example: Rajan / Priya" /></label>
+          <label className="employee-label">
+            Employee name
+            <input
+              value={employeeName}
+              onChange={(e) => setEmployeeName(e.target.value)}
+              placeholder="Example: Rajan / Priya"
+            />
+          </label>
 
           <form onSubmit={saveCompany} className="grid-form">
             <label>Country *<input value={form.country} onChange={(e)=>setField('country', e.target.value)} placeholder="Malaysia" /></label>
@@ -206,41 +270,87 @@ function App() {
             <label>Website<input value={form.website} onChange={(e)=>setField('website', e.target.value)} placeholder="https://example.com" /></label>
             <label>City<input value={form.city} onChange={(e)=>setField('city', e.target.value)} placeholder="Kuala Lumpur" /></label>
             <label className="span2">Address<textarea value={form.address} onChange={(e)=>setField('address', e.target.value)} rows="2" /></label>
-            <label>Type<select value={form.type} onChange={(e)=>setField('type', e.target.value)}>{companyTypes.map((t) => <option key={t}>{t}</option>)}</select></label>
-            <label>Priority<select value={form.priority} onChange={(e)=>setField('priority', e.target.value)}><option value="1">1 - Highest</option><option value="2">2 - High</option><option value="3">3 - Normal</option><option value="4">4 - Low</option><option value="5">5 - Lowest</option></select></label>
+
+            <label>
+              Type
+              <select value={form.type} onChange={(e)=>setField('type', e.target.value)}>
+                {companyTypes.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+
+            <label>
+              Priority
+              <select value={form.priority} onChange={(e)=>setField('priority', e.target.value)}>
+                <option value="1">1 - Highest</option>
+                <option value="2">2 - High</option>
+                <option value="3">3 - Normal</option>
+                <option value="4">4 - Low</option>
+                <option value="5">5 - Lowest</option>
+              </select>
+            </label>
+
             <label>Contact Person<input value={form.contact_person} onChange={(e)=>setField('contact_person', e.target.value)} /></label>
             <label>Designation<input value={form.designation} onChange={(e)=>setField('designation', e.target.value)} /></label>
-            <label>Imports From India<select value={form.imports_from_india} onChange={(e)=>setField('imports_from_india', e.target.value)}><option>Unknown</option><option>Yes</option><option>Likely</option><option>No</option></select></label>
+
+            <label>
+              Imports From India
+              <select value={form.imports_from_india} onChange={(e)=>setField('imports_from_india', e.target.value)}>
+                <option>Unknown</option>
+                <option>Yes</option>
+                <option>Likely</option>
+                <option>No</option>
+              </select>
+            </label>
+
             <label>Source Name<input value={form.source_name} onChange={(e)=>setField('source_name', e.target.value)} placeholder="Company website / Directory / Employee research" /></label>
             <label className="span2">Source URL<input value={form.source_url} onChange={(e)=>setField('source_url', e.target.value)} placeholder="https://..." /></label>
             <label className="span2">Internal Notes<textarea value={form.notes} onChange={(e)=>setField('notes', e.target.value)} rows="2" /></label>
+
             <label className="toggle"><input type="checkbox" checked={form.verified} onChange={(e)=>setField('verified', e.target.checked)} /> Verified</label>
             <label className="toggle"><input type="checkbox" checked={form.active} onChange={(e)=>setField('active', e.target.checked)} /> Active</label>
 
             <div className="actions span2">
-              <button className="primary" disabled={saving}><Save size={18}/>{saving ? 'Saving...' : isEditing ? 'Update Company' : 'Save Company'}</button>
-              <button type="button" className="secondary" onClick={newCompany}><Plus size={18}/>New Company</button>
-              <button type="button" className="secondary disabled" title="Coming next"><Upload size={18}/>Upload Excel</button>
+              <button className="primary" disabled={saving}>
+                <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Company' : 'Save Company'}
+              </button>
+              <button type="button" className="secondary" onClick={newCompany}>
+                <Plus size={18} />New Company
+              </button>
+              <button type="button" className="secondary disabled" title="Coming next">
+                <Upload size={18} />Upload Excel
+              </button>
             </div>
           </form>
+
           {status && <p className="status">{status}</p>}
         </section>
 
         <aside className="side">
           <section className="card">
-            <div className="card-title"><Search size={20}/> Search Company</div>
+            <div className="card-title"><Search size={20} /> Search Company</div>
+
             <label>Keyword<input value={query.text} onChange={(e)=>setQuery({...query, text:e.target.value})} placeholder="Padini / garment / sourcing" /></label>
             <label>Country<input value={query.country} onChange={(e)=>setQuery({...query, country:e.target.value})} placeholder="Malaysia" /></label>
             <label>Product<input value={query.product} onChange={(e)=>setQuery({...query, product:e.target.value})} placeholder="Readymade Garments" /></label>
-            <button className="primary full" onClick={searchCompanies} disabled={loading}><RefreshCw size={18}/>{loading ? 'Searching...' : 'Search'}</button>
+
+            <button className="primary full" onClick={searchCompanies} disabled={loading}>
+              <RefreshCw size={18} />{loading ? 'Searching...' : 'Search'}
+            </button>
+
             <div className="results">
               {results.map((item, i) => (
                 <div className="result" key={item.company_id || i}>
-                  <div className="result-top"><b>{item.company_name}</b><button onClick={() => editCompany(item)}><Pencil size={15}/>Edit</button></div>
+                  <div className="result-top">
+                    <b>{item.company_name}</b>
+                    <button onClick={() => editCompany(item)}>
+                      <Pencil size={15} />Edit
+                    </button>
+                  </div>
                   <span>{item.country} · {item.product || item.product_category || '-'} · {item.type}</span>
                   <small>Priority {item.priority || 3} · {item.verified ? 'Verified' : 'Not verified'}</small>
                 </div>
               ))}
+
               {!results.length && <p className="muted">Search results will appear here.</p>}
             </div>
           </section>
@@ -259,4 +369,56 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+function App() {
+  const auth = useAuth();
+
+  if (auth.isLoading) {
+    return <div className="page"><h2>Loading...</h2></div>;
+  }
+
+  if (auth.error) {
+    return (
+      <div className="page">
+        <section className="card" style={{ maxWidth: 520, margin: '80px auto', textAlign: 'center' }}>
+          <h1>Login error</h1>
+          <p>{auth.error.message}</p>
+          <button className="primary" onClick={() => auth.signinRedirect()}>
+            Try again
+          </button>
+        </section>
+      </div>
+    );
+  }
+
+  if (!auth.isAuthenticated) {
+    return (
+      <div className="page">
+        <section className="card" style={{ maxWidth: 520, margin: '80px auto', textAlign: 'center' }}>
+          <h1>RBR Employee Portal</h1>
+          <p>Please sign in with your approved employee email.</p>
+          <button className="primary" onClick={() => auth.signinRedirect()}>
+            Sign in / Sign up
+          </button>
+        </section>
+      </div>
+    );
+  }
+
+  return <PortalApp />;
+}
+
+const cognitoAuthConfig = {
+  authority: 'https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_ixh4UjL1x',
+  client_id: '7km97qil933t8gpe30gl4e9is9',
+  redirect_uri: 'https://main.d399lp2wrw5lfc.amplifyapp.com/',
+  response_type: 'code',
+  scope: 'openid email profile',
+};
+
+createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <AuthProvider {...cognitoAuthConfig}>
+      <App />
+    </AuthProvider>
+  </React.StrictMode>
+);
