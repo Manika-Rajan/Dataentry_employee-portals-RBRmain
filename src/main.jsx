@@ -394,7 +394,6 @@ function App() {
         <section className="card" style={{ maxWidth: 520, margin: '80px auto', textAlign: 'center' }}>
           <h1>RBR Employee Portal</h1>
           <p>Please sign in with your approved employee email.</p>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <button className="primary" onClick={() => auth.signinRedirect()}>
             Sign in / Sign up
           </button>
