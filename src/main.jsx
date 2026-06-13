@@ -121,7 +121,12 @@ function PortalApp() {
 
   async function signOutRedirect() {
     await auth.removeUser();
-    window.location.href = '/';
+  
+    const clientId = '7km97qil933t8gpe30gl4e9is9';
+    const logoutUri = `${window.location.origin}/`;
+    const cognitoDomain = 'https://ap-south-1ixh4ujl1x.auth.ap-south-1.amazoncognito.com';
+  
+    window.location.href = `${cognitoDomain}/logout?client_id=${clientId}&logout_uri=${encodeURIComponent(logoutUri)}`;
   }
 
   function setField(name, value) {
