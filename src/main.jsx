@@ -396,17 +396,8 @@ function App() {
           <p>Please sign in with your approved employee email.</p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <button className="primary" onClick={() => auth.signinRedirect()}>
-            Sign in
+            Sign in / Sign up
           </button>
-        
-          <button className="secondary" onClick={() => auth.signinRedirect()}>
-            Create account
-          </button>
-        </div>
-        
-        <p className="muted" style={{ marginTop: 16 }}>
-          New employee? Click Create account first. Existing employee? Click Sign in.
-        </p>
         </section>
       </div>
     );
