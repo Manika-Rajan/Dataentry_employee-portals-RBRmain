@@ -380,13 +380,24 @@ function App() {
   }
 
   if (auth.error) {
+    const rawMessage = String(auth.error.message || '');
+  
+    const friendlyMessage =
+      rawMessage.toLowerCase().includes('access not approved') ||
+      rawMessage.toLowerCase().includes('not approved') ||
+      rawMessage.toLowerCase().includes('not authorized') ||
+      rawMessage.toLowerCase().includes('preauthentication') ||
+      rawMessage.toLowerCase().includes('presignup')
+        ? 'This portal is restricted to approved RBR employee email IDs only. Please contact RBR admin if you need access.'
+        : rawMessage || 'We could not complete sign-in. Please try again.';
+  
     return (
       <div className="page">
-        <section className="card" style={{ maxWidth: 520, margin: '80px auto', textAlign: 'center' }}>
-          <h1>Login error</h1>
-          <p>{auth.error.message}</p>
+        <section className="card" style={{ maxWidth: 560, margin: '80px auto', textAlign: 'center' }}>
+          <h1>Access not approved</h1>
+          <p>{friendlyMessage}</p>
           <button className="primary" onClick={() => auth.signinRedirect()}>
-            Try again
+            Back to sign in
           </button>
         </section>
       </div>
