@@ -221,7 +221,7 @@ function PortalApp() {
     <div className="page">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Rajan Business Reports</p>
+          <p className="eyebrow">Rajan Business Reports - Data Research Department</p>
           <h1>Export Company Data Entry Portal</h1>
           <p className="subtext">
             Enter, search, and update verified importers, sourcing agents, distributors,
