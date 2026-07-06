@@ -269,8 +269,8 @@ function PortalApp() {
       };
 
       const path = isEditing
-        ? `/export-companies/${encodeURIComponent(form.company_id)}`
-        : '/export-companies';
+        ? `/employee-data-entry/${encodeURIComponent(form.company_id)}`
+        : '/employee-data-entry';
 
       const method = isEditing ? 'PUT' : 'POST';
       const data = await apiFetch(path, { method, body: JSON.stringify(payload) });
@@ -308,7 +308,7 @@ function PortalApp() {
       if (filters.type) params.set('type', filters.type);
 
       const queryString = params.toString();
-      const data = await apiFetch(`/export-companies${queryString ? `?${queryString}` : ''}`);
+      const data = await apiFetch(`/employee-data-entry${queryString ? `?${queryString}` : ''}`);
       const items = (data.items || []).map(normalizeCompanyRecord);
 
       setResults(items);
