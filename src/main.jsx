@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthProvider, useAuth } from 'react-oidc-context';
 import {
@@ -34,7 +34,7 @@ import './styles.css';
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 const PORTAL_KEY = import.meta.env.VITE_EMPLOYEE_PORTAL_KEY || '';
 
-const companyTypes = ['Importer', 'Retailer', 'Distributor', 'Buying House', 'Wholesaler', 'Sourcing Agent', 'Agent', 'Ecommerce', 'Manufacturer', 'Other'];
+const companyTypes = ['Importer', 'Retail Chain', 'Retailer', 'Distributor', 'Buying House', 'Wholesaler', 'Sourcing Agent', 'Agent', 'Ecommerce', 'Manufacturer', 'Other'];
 
 const emptyForm = {
   company_id: '',
@@ -101,6 +101,7 @@ function buildPayload(form, employeeName) {
     priority: Number(form.priority || 3),
     verified: Boolean(form.verified),
     active: Boolean(form.active),
+    product_country_key: productKey && countryKey ? `${productKey}#${countryKey}` : form.product_country_key || '',
     country_key: countryKey,
     product_key: productKey,
     company_key: companyKey,
@@ -108,6 +109,52 @@ function buildPayload(form, employeeName) {
     updated_at: now,
     added_by: employeeName || localStorage.getItem('rbr_employee_name') || 'employee_portal',
   };
+}
+
+
+function titleFromKeyPart(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function splitProductCountryKey(item) {
+  const key = String(item?.product_country_key || '');
+  const [productKey = '', countryKey = ''] = key.split('#');
+  return { productKey, countryKey };
+}
+
+function getCompanyProduct(item) {
+  const { productKey } = splitProductCountryKey(item);
+  return item?.product || item?.product_category || titleFromKeyPart(productKey) || '-';
+}
+
+function getCompanyCountry(item) {
+  const { countryKey } = splitProductCountryKey(item);
+  return item?.country || titleFromKeyPart(countryKey) || '-';
+}
+
+function normalizeCompanyRecord(item = {}) {
+  return {
+    ...item,
+    product: getCompanyProduct(item),
+    country: getCompanyCountry(item),
+    priority: item.priority || 3,
+    verified: item.verified !== false,
+    active: item.active !== false,
+  };
+}
+
+function truncateText(value, max = 70) {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function recordKey(item, index = 0) {
+  return item?.company_id || `${item?.product_country_key || 'record'}-${index}`;
 }
 
 async function apiFetch(path, options = {}) {
@@ -127,23 +174,20 @@ async function apiFetch(path, options = {}) {
 
 function companyCompletionPercent(item) {
   const requiredFields = [
+    'company_id',
     'company_name',
     'country',
-    'product',
+    'product_country_key',
     'company_briefing',
     'brands',
     'supply_requested',
     'email',
     'phone',
-    'website',
-    'address',
-    'city',
     'type',
-    'source_name',
-    'source_url',
   ];
 
-  const filled = requiredFields.filter((field) => String(item?.[field] || '').trim()).length;
+  const normalized = normalizeCompanyRecord(item);
+  const filled = requiredFields.filter((field) => String(normalized?.[field] || '').trim()).length;
   return Math.round((filled / requiredFields.length) * 100);
 }
 
@@ -177,9 +221,15 @@ function PortalApp() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
   const [query, setQuery] = useState({ country: '', product: '', text: '', type: '', status: '' });
+  const [expandedCompanyId, setExpandedCompanyId] = useState('');
+  const [hasLoadedRecords, setHasLoadedRecords] = useState(false);
 
   const isEditing = Boolean(form.company_id);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
+
+  useEffect(() => {
+    loadCompanies({}, 'initial');
+  }, []);
 
   async function signOutRedirect() {
     await auth.removeUser();
@@ -227,10 +277,15 @@ function PortalApp() {
 
       setStatus(isEditing ? 'Company updated successfully.' : 'Company saved successfully. You can enter the next company now.');
 
-      if (isEditing) {
-        setResults((prev) =>
-          prev.map((x) => (x.company_id === data.item.company_id ? data.item : x))
-        );
+      if (data.item) {
+        const normalizedItem = normalizeCompanyRecord(data.item);
+        setResults((prev) => {
+          const exists = prev.some((x) => x.company_id === normalizedItem.company_id);
+          if (exists) {
+            return prev.map((x) => (x.company_id === normalizedItem.company_id ? normalizedItem : x));
+          }
+          return [normalizedItem, ...prev];
+        });
       }
 
       setForm(emptyForm);
@@ -241,39 +296,56 @@ function PortalApp() {
     }
   }
 
-  async function searchCompanies() {
+  async function loadCompanies(filters = {}, mode = 'filter') {
     setLoading(true);
     setStatus('');
 
     try {
       const params = new URLSearchParams();
-      if (query.country) params.set('country', query.country);
-      if (query.product) params.set('product', query.product);
-      if (query.text) params.set('q', query.text);
+      if (filters.country) params.set('country', filters.country);
+      if (filters.product) params.set('product', filters.product);
+      if (filters.text) params.set('q', filters.text);
+      if (filters.type) params.set('type', filters.type);
 
-      const data = await apiFetch(`/export-companies?${params.toString()}`);
-      setResults(data.items || []);
+      const queryString = params.toString();
+      const data = await apiFetch(`/export-companies${queryString ? `?${queryString}` : ''}`);
+      const items = (data.items || []).map(normalizeCompanyRecord);
 
-      if (!data.items?.length) setStatus('No matching companies found.');
+      setResults(items);
+      setHasLoadedRecords(true);
+      setExpandedCompanyId('');
+
+      if (!items.length) {
+        setStatus(mode === 'initial' ? 'No company records found in DynamoDB yet.' : 'No matching companies found.');
+      } else if (mode === 'initial') {
+        setStatus(`Loaded ${items.length} company record${items.length === 1 ? '' : 's'} from DynamoDB.`);
+      }
     } catch (err) {
-      setStatus(err.message || 'Search failed.');
+      setStatus(err.message || 'Company records could not be loaded.');
     } finally {
       setLoading(false);
     }
   }
 
-  function resetSearch() {
-    setQuery({ country: '', product: '', text: '', type: '', status: '' });
-    setResults([]);
-    setStatus('Filters reset.');
+  async function searchCompanies() {
+    await loadCompanies(query, 'filter');
   }
 
+  function resetSearch() {
+    const emptyQuery = { country: '', product: '', text: '', type: '', status: '' };
+    setQuery(emptyQuery);
+    loadCompanies(emptyQuery, 'initial');
+  }
+
+
   function editCompany(item) {
+    const normalized = normalizeCompanyRecord(item);
     setForm({
       ...emptyForm,
-      ...item,
-      product: item.product || item.product_category || '',
-      priority: String(item.priority || 3),
+      ...normalized,
+      product: getCompanyProduct(normalized),
+      country: getCompanyCountry(normalized),
+      priority: String(normalized.priority || 3),
     });
 
     const formBlock = document.getElementById('company-entry-form');
@@ -357,7 +429,7 @@ function PortalApp() {
         <header className="dashboard-topbar">
           <div>
             <h1>Company Data Entry Dashboard</h1>
-            <p>Each company entry should contain contact number, email address, website, postal address, and source details.</p>
+            <p>Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.</p>
           </div>
 
           <div className="topbar-actions">
@@ -379,7 +451,7 @@ function PortalApp() {
         <section className="stats-grid">
           <div className="stat-card">
             <div className="stat-icon icon-blue"><FileText size={27} /></div>
-            <div><p>Total Records</p><h2>{dashboard.total}</h2><span>Current search results</span></div>
+            <div><p>Total Records</p><h2>{dashboard.total}</h2><span>DynamoDB records shown</span></div>
           </div>
           <div className="stat-card">
             <div className="stat-icon icon-green"><CheckCircle2 size={30} /></div>
@@ -473,52 +545,87 @@ function PortalApp() {
           </div>
 
           <div className="table-wrap">
-            <table className="data-table">
+            <table className="data-table company-records-table">
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Company</th>
+                  <th>Company ID</th>
+                  <th>Company Name</th>
                   <th>Country</th>
-                  <th>Product</th>
+                  <th>Product Key</th>
                   <th>Type</th>
-                  <th>Priority</th>
-                  <th>Progress</th>
-                  <th>Status</th>
+                  <th>Brands</th>
+                  <th>Contact</th>
+                  <th>Supply Requested</th>
+                  <th>Completeness</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {displayedResults.map((item, index) => {
                   const percent = companyCompletionPercent(item);
+                  const rowKey = recordKey(item, index);
+                  const isExpanded = expandedCompanyId === rowKey;
                   return (
-                    <tr key={item.company_id || `${item.company_name}-${index}`}>
-                      <td>{index + 1}</td>
-                      <td>
-                        <b>{item.company_name || '-'}</b>
-                        <small>{item.email || item.website || '-'}</small>
-                      </td>
-                      <td>{item.country || '-'}</td>
-                      <td>{item.product || item.product_category || '-'}</td>
-                      <td>{item.type || '-'}</td>
-                      <td>{item.priority || 3}</td>
-                      <td>
-                        <div className="table-progress"><span style={{ width: `${percent}%` }} /></div>
-                        <em>{percent}%</em>
-                      </td>
-                      <td><span className={`status-pill ${statusClass(percent)}`}>{statusLabel(percent)}</span></td>
-                      <td>
-                        <button type="button" className="view-button" onClick={() => editCompany(item)}>
-                          <Eye size={15} /> View Details
-                        </button>
-                      </td>
-                    </tr>
+                    <React.Fragment key={rowKey}>
+                      <tr>
+                        <td>{index + 1}</td>
+                        <td><b>{item.company_id || '-'}</b><small>{item.product_country_key || '-'}</small></td>
+                        <td>
+                          <b>{item.company_name || '-'}</b>
+                          <small>{truncateText(item.company_briefing, 58)}</small>
+                        </td>
+                        <td>{getCompanyCountry(item)}</td>
+                        <td>
+                          <b>{getCompanyProduct(item)}</b>
+                          <small>{item.product_country_key || '-'}</small>
+                        </td>
+                        <td>{item.type || '-'}</td>
+                        <td>{truncateText(item.brands, 52)}</td>
+                        <td>
+                          <b>{item.email || '-'}</b>
+                          <small>{item.phone || '-'}</small>
+                        </td>
+                        <td>{truncateText(item.supply_requested, 64)}</td>
+                        <td>
+                          <div className="table-progress"><span style={{ width: `${percent}%` }} /></div>
+                          <em>{percent}%</em>
+                        </td>
+                        <td>
+                          <button type="button" className="view-button" onClick={() => setExpandedCompanyId(isExpanded ? '' : rowKey)}>
+                            <Eye size={15} /> {isExpanded ? 'Hide' : 'View'} Details
+                          </button>
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr className="details-row">
+                          <td colSpan="11">
+                            <div className="details-grid">
+                              <div><span>Company Briefing</span><p>{item.company_briefing || '-'}</p></div>
+                              <div><span>Brands</span><p>{item.brands || '-'}</p></div>
+                              <div><span>Supply Requested</span><p>{item.supply_requested || '-'}</p></div>
+                              <div><span>Email</span><p>{item.email || '-'}</p></div>
+                              <div><span>Phone</span><p>{item.phone || '-'}</p></div>
+                              <div><span>Product Country Key</span><p>{item.product_country_key || '-'}</p></div>
+                              <div><span>Record Status</span><p><span className={`status-pill ${statusClass(percent)}`}>{statusLabel(percent)}</span></p></div>
+                              <div className="details-actions">
+                                <button type="button" className="filter-button" onClick={() => editCompany(item)}>
+                                  <Pencil size={15} /> Edit This Record
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
 
                 {!displayedResults.length && (
                   <tr>
-                    <td colSpan="9" className="empty-table">
-                      Search company records to view them here. Use the form below to add a new company.
+                    <td colSpan="11" className="empty-table">
+                      {loading ? 'Loading company records from DynamoDB...' : hasLoadedRecords ? 'No matching company records found.' : 'Company records will appear here after loading.'}
                     </td>
                   </tr>
                 )}
@@ -624,7 +731,7 @@ function PortalApp() {
             <p><b>country_key:</b> {preview.country_key || '-'}</p>
             <p><b>product_key:</b> {preview.product_key || '-'}</p>
             <p><b>company_key:</b> {preview.company_key || '-'}</p>
-            <p><b>Partition Key:</b> {preview.country_key && preview.product_key ? `${preview.country_key}#${preview.product_key}` : '-'}</p>
+            <p><b>product_country_key:</b> {preview.product_country_key || '-'}</p>
             <p><b>search_terms:</b> {(preview.search_terms || []).slice(0, 25).join(', ') || '-'}</p>
           </aside>
         </section>
