@@ -223,6 +223,8 @@ function PortalApp() {
   const [query, setQuery] = useState({ country: '', product: '', text: '', type: '', status: '' });
   const [expandedCompanyId, setExpandedCompanyId] = useState('');
   const [hasLoadedRecords, setHasLoadedRecords] = useState(false);
+  const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
 
   const isEditing = Boolean(form.company_id);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
@@ -275,7 +277,7 @@ function PortalApp() {
       const method = isEditing ? 'PUT' : 'POST';
       const data = await apiFetch(path, { method, body: JSON.stringify(payload) });
 
-      setStatus(isEditing ? 'Company updated successfully.' : 'Company saved successfully. You can enter the next company now.');
+      setStatus(isEditing ? 'Company updated successfully.' : 'Company saved successfully.');
 
       if (data.item) {
         const normalizedItem = normalizeCompanyRecord(data.item);
@@ -289,6 +291,8 @@ function PortalApp() {
       }
 
       setForm(emptyForm);
+      setIsRecordModalOpen(false);
+      setShowAdvancedFields(false);
     } catch (err) {
       setStatus(err.message || 'Save failed.');
     } finally {
@@ -348,14 +352,23 @@ function PortalApp() {
       priority: String(normalized.priority || 3),
     });
 
-    const formBlock = document.getElementById('company-entry-form');
-    formBlock?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setShowAdvancedFields(false);
+    setIsRecordModalOpen(true);
     setStatus(`Editing: ${item.company_name}`);
   }
 
   function newCompany() {
     setForm(emptyForm);
+    setShowAdvancedFields(false);
+    setIsRecordModalOpen(true);
     setStatus('Ready for a new company entry.');
+  }
+
+  function closeRecordModal() {
+    if (saving) return;
+    setIsRecordModalOpen(false);
+    setShowAdvancedFields(false);
+    setForm(emptyForm);
   }
 
   const displayedResults = useMemo(() => {
@@ -517,9 +530,14 @@ function PortalApp() {
         <section className="panel requests-panel">
           <div className="section-title-row">
             <h3>All Company Records</h3>
-            <button type="button" className="export-button">
-              <Download size={17} /> Export <ChevronDown size={15} />
-            </button>
+            <div className="table-actions">
+              <button type="button" className="add-record-button" onClick={newCompany}>
+                <Plus size={17} /> Add Record
+              </button>
+              <button type="button" className="export-button">
+                <Download size={17} /> Export <ChevronDown size={15} />
+              </button>
+            </div>
           </div>
 
           <div className="filters-row">
@@ -543,6 +561,8 @@ function PortalApp() {
               <RotateCcw size={15} /> Reset
             </button>
           </div>
+
+          {status && <p className="status-message table-status">{status}</p>}
 
           <div className="table-wrap">
             <table className="data-table company-records-table">
@@ -633,102 +653,101 @@ function PortalApp() {
           </div>
         </section>
 
-        <section className="entry-grid" id="company-entry-form">
-          <section className="panel form-panel">
-            <div className="section-title-row">
-              <h3>{isEditing ? 'Edit Company Entry' : 'Add Company Entry'}</h3>
-              {isEditing && (
-                <button type="button" className="reset-button" onClick={newCompany}>
-                  <XCircle size={17} /> Cancel Edit
-                </button>
-              )}
-            </div>
-
-            <label className="employee-label">
-              Employee Name
-              <input
-                value={employeeName}
-                onChange={(e) => setEmployeeName(e.target.value)}
-                placeholder="Example: Rajan / Priya"
-              />
-            </label>
-
-            <form onSubmit={saveCompany} className="grid-form">
-              <label>Country *<input value={form.country} onChange={(e) => setField('country', e.target.value)} placeholder="Malaysia" /></label>
-              <label>Product *<input value={form.product} onChange={(e) => setField('product', e.target.value)} placeholder="Readymade Garments" /></label>
-              <label className="span2">Company Name *<input value={form.company_name} onChange={(e) => setField('company_name', e.target.value)} placeholder="Padini Holdings Berhad" /></label>
-              <label className="span2">Company Briefing<textarea value={form.company_briefing} onChange={(e) => setField('company_briefing', e.target.value)} rows="3" placeholder="Very large textile/fashion network. Useful detail for report generation." /></label>
-              <label className="span2">Brands<textarea value={form.brands} onChange={(e) => setField('brands', e.target.value)} rows="2" placeholder="Padini, Seed, Vincci, PDI" /></label>
-              <label className="span2">Supply Requested<textarea value={form.supply_requested} onChange={(e) => setField('supply_requested', e.target.value)} rows="2" placeholder="budget fashion, private label garments, seasonal collections" /></label>
-              <label>Email<input value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder="buyer@example.com" /></label>
-              <label>Phone<input value={form.phone} onChange={(e) => setField('phone', e.target.value)} placeholder="+60123456789" /></label>
-              <label>Website<input value={form.website} onChange={(e) => setField('website', e.target.value)} placeholder="https://example.com" /></label>
-              <label>City<input value={form.city} onChange={(e) => setField('city', e.target.value)} placeholder="Kuala Lumpur" /></label>
-              <label className="span2">Address<textarea value={form.address} onChange={(e) => setField('address', e.target.value)} rows="2" /></label>
-
-              <label>
-                Type
-                <select value={form.type} onChange={(e) => setField('type', e.target.value)}>
-                  {companyTypes.map((t) => <option key={t}>{t}</option>)}
-                </select>
-              </label>
-
-              <label>
-                Priority
-                <select value={form.priority} onChange={(e) => setField('priority', e.target.value)}>
-                  <option value="1">1 - Highest</option>
-                  <option value="2">2 - High</option>
-                  <option value="3">3 - Normal</option>
-                  <option value="4">4 - Low</option>
-                  <option value="5">5 - Lowest</option>
-                </select>
-              </label>
-
-              <label>Contact Person<input value={form.contact_person} onChange={(e) => setField('contact_person', e.target.value)} /></label>
-              <label>Designation<input value={form.designation} onChange={(e) => setField('designation', e.target.value)} /></label>
-
-              <label>
-                Imports From India
-                <select value={form.imports_from_india} onChange={(e) => setField('imports_from_india', e.target.value)}>
-                  <option>Unknown</option>
-                  <option>Yes</option>
-                  <option>Likely</option>
-                  <option>No</option>
-                </select>
-              </label>
-
-              <label>Source Name<input value={form.source_name} onChange={(e) => setField('source_name', e.target.value)} placeholder="Company website / Directory / Employee research" /></label>
-              <label className="span2">Source URL<input value={form.source_url} onChange={(e) => setField('source_url', e.target.value)} placeholder="https://..." /></label>
-              <label className="span2">Internal Notes<textarea value={form.notes} onChange={(e) => setField('notes', e.target.value)} rows="2" /></label>
-
-              <label className="toggle"><input type="checkbox" checked={form.verified} onChange={(e) => setField('verified', e.target.checked)} /> Verified</label>
-              <label className="toggle"><input type="checkbox" checked={form.active} onChange={(e) => setField('active', e.target.checked)} /> Active</label>
-
-              <div className="actions span2">
-                <button className="primary" disabled={saving}>
-                  <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Company' : 'Save Company'}
-                </button>
-                <button type="button" className="secondary" onClick={newCompany}>
-                  <Plus size={18} />New Company
-                </button>
-                <button type="button" className="secondary disabled" title="Coming next">
-                  <Upload size={18} />Upload Excel
+        {isRecordModalOpen && (
+          <div className="modal-overlay" role="presentation">
+            <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-modal-title">
+              <div className="modal-head">
+                <div>
+                  <h3 id="record-modal-title">{isEditing ? 'Edit Company Record' : 'Add Company Record'}</h3>
+                  <p>Enter only the key DynamoDB fields first. Extra internal fields are hidden under additional details.</p>
+                </div>
+                <button type="button" className="modal-close" onClick={closeRecordModal} aria-label="Close popup">
+                  <XCircle size={22} />
                 </button>
               </div>
-            </form>
 
-            {status && <p className="status-message">{status}</p>}
-          </section>
+              <label className="employee-label">
+                Employee Name
+                <input
+                  value={employeeName}
+                  onChange={(e) => setEmployeeName(e.target.value)}
+                  placeholder="Example: Rajan / Priya"
+                />
+              </label>
 
-          <aside className="panel preview-panel">
-            <h3><BarChart3 size={20} /> Auto Generated Keys</h3>
-            <p><b>country_key:</b> {preview.country_key || '-'}</p>
-            <p><b>product_key:</b> {preview.product_key || '-'}</p>
-            <p><b>company_key:</b> {preview.company_key || '-'}</p>
-            <p><b>product_country_key:</b> {preview.product_country_key || '-'}</p>
-            <p><b>search_terms:</b> {(preview.search_terms || []).slice(0, 25).join(', ') || '-'}</p>
-          </aside>
-        </section>
+              <form onSubmit={saveCompany} className="modal-form">
+                <label>company_id<input value={form.company_id} onChange={(e) => setField('company_id', e.target.value)} placeholder="MY000002 or leave blank if Lambda generates" disabled={isEditing} /></label>
+                <label>type
+                  <select value={form.type} onChange={(e) => setField('type', e.target.value)}>
+                    {companyTypes.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </label>
+                <label>country *<input value={form.country} onChange={(e) => setField('country', e.target.value)} placeholder="Malaysia" /></label>
+                <label>product *<input value={form.product} onChange={(e) => setField('product', e.target.value)} placeholder="Readymade Garments" /></label>
+                <label className="span2">company_name *<input value={form.company_name} onChange={(e) => setField('company_name', e.target.value)} placeholder="Padini Holdings Berhad" /></label>
+                <label className="span2">brands<textarea value={form.brands} onChange={(e) => setField('brands', e.target.value)} rows="2" placeholder="Padini, Seed, Vincci, PDI" /></label>
+                <label>email<input value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder="purchasing@example.com" /></label>
+                <label>phone<input value={form.phone} onChange={(e) => setField('phone', e.target.value)} placeholder="+60350211388" /></label>
+                <label className="span2">supply_requested<textarea value={form.supply_requested} onChange={(e) => setField('supply_requested', e.target.value)} rows="2" placeholder="budget fashion, private label garments, seasonal collections" /></label>
+                <label className="span2">company_briefing<textarea value={form.company_briefing} onChange={(e) => setField('company_briefing', e.target.value)} rows="3" placeholder="Large fashion retail group in Malaysia." /></label>
+
+                <button type="button" className="advanced-toggle span2" onClick={() => setShowAdvancedFields((value) => !value)}>
+                  {showAdvancedFields ? 'Hide Additional Details' : 'Show Additional Details'}
+                </button>
+
+                {showAdvancedFields && (
+                  <div className="advanced-fields span2">
+                    <label>Website<input value={form.website} onChange={(e) => setField('website', e.target.value)} placeholder="https://example.com" /></label>
+                    <label>City<input value={form.city} onChange={(e) => setField('city', e.target.value)} placeholder="Kuala Lumpur" /></label>
+                    <label className="span2">Address<textarea value={form.address} onChange={(e) => setField('address', e.target.value)} rows="2" /></label>
+                    <label>Priority
+                      <select value={form.priority} onChange={(e) => setField('priority', e.target.value)}>
+                        <option value="1">1 - Highest</option>
+                        <option value="2">2 - High</option>
+                        <option value="3">3 - Normal</option>
+                        <option value="4">4 - Low</option>
+                        <option value="5">5 - Lowest</option>
+                      </select>
+                    </label>
+                    <label>Contact Person<input value={form.contact_person} onChange={(e) => setField('contact_person', e.target.value)} /></label>
+                    <label>Designation<input value={form.designation} onChange={(e) => setField('designation', e.target.value)} /></label>
+                    <label>Imports From India
+                      <select value={form.imports_from_india} onChange={(e) => setField('imports_from_india', e.target.value)}>
+                        <option>Unknown</option>
+                        <option>Yes</option>
+                        <option>Likely</option>
+                        <option>No</option>
+                      </select>
+                    </label>
+                    <label>Source Name<input value={form.source_name} onChange={(e) => setField('source_name', e.target.value)} placeholder="Company website / Directory / Employee research" /></label>
+                    <label className="span2">Source URL<input value={form.source_url} onChange={(e) => setField('source_url', e.target.value)} placeholder="https://..." /></label>
+                    <label className="span2">Internal Notes<textarea value={form.notes} onChange={(e) => setField('notes', e.target.value)} rows="2" /></label>
+                    <label className="toggle"><input type="checkbox" checked={form.verified} onChange={(e) => setField('verified', e.target.checked)} /> Verified</label>
+                    <label className="toggle"><input type="checkbox" checked={form.active} onChange={(e) => setField('active', e.target.checked)} /> Active</label>
+                  </div>
+                )}
+
+                <div className="mini-preview span2">
+                  <h4><BarChart3 size={17} /> Auto Generated Keys</h4>
+                  <div className="mini-preview-grid">
+                    <p><b>product_country_key:</b> {preview.product_country_key || '-'}</p>
+                    <p><b>country_key:</b> {preview.country_key || '-'}</p>
+                    <p><b>product_key:</b> {preview.product_key || '-'}</p>
+                    <p><b>company_key:</b> {preview.company_key || '-'}</p>
+                  </div>
+                </div>
+
+                <div className="modal-actions span2">
+                  <button type="button" className="secondary" onClick={closeRecordModal} disabled={saving}>Cancel</button>
+                  <button className="primary" disabled={saving}>
+                    <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Record' : 'Save Record'}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
+
       </main>
     </div>
   );
