@@ -641,3 +641,70 @@ label {
   .dashboard-topbar h1 { font-size: 24px; }
   .topbar-actions { width: 100%; justify-content: space-between; }
 }
+
+/* DynamoDB company records expansion */
+.company-records-table {
+  min-width: 1450px;
+}
+
+.company-records-table td small {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
+.details-row td {
+  background: #f8fbff;
+  padding: 0 !important;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px 20px;
+  border-top: 1px solid #dbeafe;
+}
+
+.details-grid div {
+  background: white;
+  border: 1px solid #e7edf7;
+  border-radius: 10px;
+  padding: 12px 13px;
+  min-height: 78px;
+}
+
+.details-grid span {
+  display: block;
+  color: #68748a;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 7px;
+}
+
+.details-grid p {
+  margin: 0;
+  color: #071029;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.details-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.details-actions .filter-button {
+  width: 100%;
+}
+
+@media (max-width: 1120px) {
+  .details-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .details-grid { grid-template-columns: 1fr; }
+}
