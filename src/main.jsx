@@ -1,7 +1,34 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthProvider, useAuth } from 'react-oidc-context';
-import { Save, Search, Plus, Database, ShieldCheck, RefreshCw, Pencil, Upload, XCircle } from 'lucide-react';
+import {
+  Save,
+  Search,
+  Plus,
+  Database,
+  ShieldCheck,
+  RefreshCw,
+  Pencil,
+  Upload,
+  XCircle,
+  LayoutDashboard,
+  ClipboardList,
+  Users,
+  FileText,
+  Settings,
+  LogOut,
+  Bell,
+  UserCircle,
+  ChevronDown,
+  Eye,
+  Download,
+  BarChart3,
+  CheckCircle2,
+  Clock3,
+  PauseCircle,
+  TrendingUp,
+  RotateCcw,
+} from 'lucide-react';
 import './styles.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
@@ -45,7 +72,7 @@ function normalizeUnderscore(value) {
 
 function splitTerms(value) {
   return String(value || '')
-    .split(/[,.\n]/)
+    .split(/[,\.\n]/)
     .map(normalizeUnderscore)
     .filter(Boolean);
 }
@@ -98,6 +125,41 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+function companyCompletionPercent(item) {
+  const requiredFields = [
+    'company_name',
+    'country',
+    'product',
+    'company_briefing',
+    'brands',
+    'supply_requested',
+    'email',
+    'phone',
+    'website',
+    'address',
+    'city',
+    'type',
+    'source_name',
+    'source_url',
+  ];
+
+  const filled = requiredFields.filter((field) => String(item?.[field] || '').trim()).length;
+  return Math.round((filled / requiredFields.length) * 100);
+}
+
+function statusLabel(percent) {
+  if (percent >= 100) return 'Completed';
+  if (percent <= 0) return 'Not Started';
+  return `${percent}% Complete`;
+}
+
+function statusClass(percent) {
+  if (percent >= 100) return 'status-completed';
+  if (percent <= 0) return 'status-not-started';
+  if (percent < 25) return 'status-low';
+  return 'status-progress';
+}
+
 function PortalApp() {
   const auth = useAuth();
 
@@ -114,18 +176,18 @@ function PortalApp() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
-  const [query, setQuery] = useState({ country: '', product: '', text: '' });
+  const [query, setQuery] = useState({ country: '', product: '', text: '', type: '', status: '' });
 
   const isEditing = Boolean(form.company_id);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
 
   async function signOutRedirect() {
     await auth.removeUser();
-  
+
     const clientId = '7km97qil933t8gpe30gl4e9is9';
     const logoutUri = `${window.location.origin}/`;
     const cognitoDomain = 'https://ap-south-1ixh4ujl1x.auth.ap-south-1.amazoncognito.com';
-  
+
     window.location.href = `${cognitoDomain}/logout?client_id=${clientId}&logout_uri=${encodeURIComponent(logoutUri)}`;
   }
 
@@ -200,6 +262,12 @@ function PortalApp() {
     }
   }
 
+  function resetSearch() {
+    setQuery({ country: '', product: '', text: '', type: '', status: '' });
+    setResults([]);
+    setStatus('Filters reset.');
+  }
+
   function editCompany(item) {
     setForm({
       ...emptyForm,
@@ -208,7 +276,8 @@ function PortalApp() {
       priority: String(item.priority || 3),
     });
 
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const formBlock = document.getElementById('company-entry-form');
+    formBlock?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setStatus(`Editing: ${item.company_name}`);
   }
 
@@ -217,156 +286,348 @@ function PortalApp() {
     setStatus('Ready for a new company entry.');
   }
 
+  const displayedResults = useMemo(() => {
+    return results.filter((item) => {
+      const percent = companyCompletionPercent(item);
+      const typeMatch = !query.type || item.type === query.type;
+      let statusMatch = true;
+
+      if (query.status === 'Completed') statusMatch = percent >= 100;
+      if (query.status === 'In Progress') statusMatch = percent > 0 && percent < 100;
+      if (query.status === 'Not Started') statusMatch = percent <= 0;
+
+      return typeMatch && statusMatch;
+    });
+  }, [results, query.type, query.status]);
+
+  const dashboard = useMemo(() => {
+    const total = displayedResults.length;
+    const completionValues = displayedResults.map(companyCompletionPercent);
+    const completed = completionValues.filter((value) => value >= 100).length;
+    const notStarted = completionValues.filter((value) => value <= 0).length;
+    const inProgress = Math.max(total - completed - notStarted, 0);
+    const average = total
+      ? Math.round(completionValues.reduce((sum, value) => sum + value, 0) / total)
+      : 0;
+
+    const bucketDefs = [
+      { key: 'completed', label: '100% Completed', count: completionValues.filter((v) => v >= 100).length },
+      { key: 'high', label: '75% - 99%', count: completionValues.filter((v) => v >= 75 && v < 100).length },
+      { key: 'mid', label: '50% - 74%', count: completionValues.filter((v) => v >= 50 && v < 75).length },
+      { key: 'low', label: '25% - 49%', count: completionValues.filter((v) => v >= 25 && v < 50).length },
+      { key: 'started', label: '1% - 24%', count: completionValues.filter((v) => v > 0 && v < 25).length },
+      { key: 'zero', label: '0% Not Started', count: completionValues.filter((v) => v <= 0).length },
+    ];
+
+    return { total, completed, inProgress, notStarted, average, bucketDefs };
+  }, [displayedResults]);
+
+  const progressSegments = useMemo(() => {
+    const total = dashboard.total || 1;
+    return [
+      { key: 'completed', label: 'Completed', value: dashboard.completed, colorClass: 'green', percent: Math.round((dashboard.completed / total) * 100) },
+      { key: 'progress', label: 'In Progress', value: dashboard.inProgress, colorClass: 'blue', percent: Math.round((dashboard.inProgress / total) * 100) },
+      { key: 'not-started', label: 'Not Started', value: dashboard.notStarted, colorClass: 'orange', percent: Math.round((dashboard.notStarted / total) * 100) },
+    ];
+  }, [dashboard]);
+
   return (
-    <div className="page">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Rajan Business Reports - Data Research Department</p>
-          <h1>Export Company Data Entry Portal</h1>
-          <p className="subtext">
-            Enter, search, and update verified importers, sourcing agents, distributors,
-            wholesalers, buying houses, and retail chains for RBR instant reports.
-          </p>
+    <div className="dashboard-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-icon"><Search size={25} /></div>
+          <span>RBR ASSIGNER</span>
         </div>
 
-        <div>
-          <div className="badge">
-            <ShieldCheck size={18} /> {employeeEmail || 'Employee Portal'}
-          </div>
-          <button type="button" className="ghost" onClick={signOutRedirect} style={{ marginTop: 10 }}>
-            Sign out
-          </button>
-        </div>
-      </header>
+        <nav className="sidebar-nav">
+          <button className="nav-item active"><LayoutDashboard size={21} /> Dashboard</button>
+          <button className="nav-item"><ClipboardList size={21} /> Requests</button>
+          <button className="nav-item"><Users size={21} /> Associates</button>
+          <button className="nav-item"><FileText size={21} /> Reports</button>
+          <button className="nav-item"><Database size={21} /> Data Entry</button>
+          <button className="nav-item"><Settings size={21} /> Settings</button>
+        </nav>
 
-      <main className="layout">
-        <section className="card form-card">
-          <div className="section-head">
-            <div className="card-title">
-              <Database size={20} /> {isEditing ? 'Edit company' : 'Add company'}
-            </div>
-            {isEditing && (
-              <button type="button" className="ghost" onClick={newCompany}>
-                <XCircle size={17} /> Cancel edit
-              </button>
-            )}
+        <button type="button" className="nav-item logout" onClick={signOutRedirect}>
+          <LogOut size={21} /> Logout
+        </button>
+      </aside>
+
+      <main className="dashboard-main">
+        <header className="dashboard-topbar">
+          <div>
+            <h1>Company Data Entry Dashboard</h1>
+            <p>Each company entry should contain contact number, email address, website, postal address, and source details.</p>
           </div>
 
-          <label className="employee-label">
-            Employee name
-            <input
-              value={employeeName}
-              onChange={(e) => setEmployeeName(e.target.value)}
-              placeholder="Example: Rajan / Priya"
-            />
-          </label>
-
-          <form onSubmit={saveCompany} className="grid-form">
-            <label>Country *<input value={form.country} onChange={(e)=>setField('country', e.target.value)} placeholder="Malaysia" /></label>
-            <label>Product *<input value={form.product} onChange={(e)=>setField('product', e.target.value)} placeholder="Readymade Garments" /></label>
-            <label className="span2">Company Name *<input value={form.company_name} onChange={(e)=>setField('company_name', e.target.value)} placeholder="Padini Holdings Berhad" /></label>
-            <label className="span2">Company Briefing<textarea value={form.company_briefing} onChange={(e)=>setField('company_briefing', e.target.value)} rows="3" placeholder="Very large textile/fashion network. Useful detail for report generation." /></label>
-            <label className="span2">Brands<textarea value={form.brands} onChange={(e)=>setField('brands', e.target.value)} rows="2" placeholder="Padini, Seed, Vincci, PDI" /></label>
-            <label className="span2">Supply Requested<textarea value={form.supply_requested} onChange={(e)=>setField('supply_requested', e.target.value)} rows="2" placeholder="budget fashion, private label garments, seasonal collections" /></label>
-            <label>Email<input value={form.email} onChange={(e)=>setField('email', e.target.value)} placeholder="buyer@example.com" /></label>
-            <label>Phone<input value={form.phone} onChange={(e)=>setField('phone', e.target.value)} placeholder="+60123456789" /></label>
-            <label>Website<input value={form.website} onChange={(e)=>setField('website', e.target.value)} placeholder="https://example.com" /></label>
-            <label>City<input value={form.city} onChange={(e)=>setField('city', e.target.value)} placeholder="Kuala Lumpur" /></label>
-            <label className="span2">Address<textarea value={form.address} onChange={(e)=>setField('address', e.target.value)} rows="2" /></label>
-
-            <label>
-              Type
-              <select value={form.type} onChange={(e)=>setField('type', e.target.value)}>
-                {companyTypes.map((t) => <option key={t}>{t}</option>)}
-              </select>
-            </label>
-
-            <label>
-              Priority
-              <select value={form.priority} onChange={(e)=>setField('priority', e.target.value)}>
-                <option value="1">1 - Highest</option>
-                <option value="2">2 - High</option>
-                <option value="3">3 - Normal</option>
-                <option value="4">4 - Low</option>
-                <option value="5">5 - Lowest</option>
-              </select>
-            </label>
-
-            <label>Contact Person<input value={form.contact_person} onChange={(e)=>setField('contact_person', e.target.value)} /></label>
-            <label>Designation<input value={form.designation} onChange={(e)=>setField('designation', e.target.value)} /></label>
-
-            <label>
-              Imports From India
-              <select value={form.imports_from_india} onChange={(e)=>setField('imports_from_india', e.target.value)}>
-                <option>Unknown</option>
-                <option>Yes</option>
-                <option>Likely</option>
-                <option>No</option>
-              </select>
-            </label>
-
-            <label>Source Name<input value={form.source_name} onChange={(e)=>setField('source_name', e.target.value)} placeholder="Company website / Directory / Employee research" /></label>
-            <label className="span2">Source URL<input value={form.source_url} onChange={(e)=>setField('source_url', e.target.value)} placeholder="https://..." /></label>
-            <label className="span2">Internal Notes<textarea value={form.notes} onChange={(e)=>setField('notes', e.target.value)} rows="2" /></label>
-
-            <label className="toggle"><input type="checkbox" checked={form.verified} onChange={(e)=>setField('verified', e.target.checked)} /> Verified</label>
-            <label className="toggle"><input type="checkbox" checked={form.active} onChange={(e)=>setField('active', e.target.checked)} /> Active</label>
-
-            <div className="actions span2">
-              <button className="primary" disabled={saving}>
-                <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Company' : 'Save Company'}
-              </button>
-              <button type="button" className="secondary" onClick={newCompany}>
-                <Plus size={18} />New Company
-              </button>
-              <button type="button" className="secondary disabled" title="Coming next">
-                <Upload size={18} />Upload Excel
-              </button>
+          <div className="topbar-actions">
+            <button className="notification-button" aria-label="Notifications">
+              <Bell size={24} />
+              <span>4</span>
+            </button>
+            <div className="admin-chip">
+              <UserCircle size={38} />
+              <div>
+                <b>{employeeName || 'Admin'}</b>
+                <small>{employeeEmail || 'Employee Portal'}</small>
+              </div>
+              <ChevronDown size={18} />
             </div>
-          </form>
+          </div>
+        </header>
 
-          {status && <p className="status">{status}</p>}
+        <section className="stats-grid">
+          <div className="stat-card">
+            <div className="stat-icon icon-blue"><FileText size={27} /></div>
+            <div><p>Total Records</p><h2>{dashboard.total}</h2><span>Current search results</span></div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon icon-green"><CheckCircle2 size={30} /></div>
+            <div><p>Completed Records</p><h2>{dashboard.completed}</h2><span>All key fields added</span></div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon icon-blue-soft"><Clock3 size={30} /></div>
+            <div><p>In Progress Records</p><h2>{dashboard.inProgress}</h2><span>Partially completed</span></div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon icon-orange"><PauseCircle size={30} /></div>
+            <div><p>Not Started</p><h2>{dashboard.notStarted}</h2><span>No data entered</span></div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon icon-purple"><TrendingUp size={30} /></div>
+            <div><p>Average Completion</p><h2>{dashboard.average}%</h2><span>Across displayed records</span></div>
+          </div>
         </section>
 
-        <aside className="side">
-          <section className="card">
-            <div className="card-title"><Search size={20} /> Search Company</div>
-
-            <label>Keyword<input value={query.text} onChange={(e)=>setQuery({...query, text:e.target.value})} placeholder="Padini / garment / sourcing" /></label>
-            <label>Country<input value={query.country} onChange={(e)=>setQuery({...query, country:e.target.value})} placeholder="Malaysia" /></label>
-            <label>Product<input value={query.product} onChange={(e)=>setQuery({...query, product:e.target.value})} placeholder="Readymade Garments" /></label>
-
-            <button className="primary full" onClick={searchCompanies} disabled={loading}>
-              <RefreshCw size={18} />{loading ? 'Searching...' : 'Search'}
-            </button>
-
-            <div className="results">
-              {results.map((item, i) => (
-                <div className="result" key={item.company_id || i}>
-                  <div className="result-top">
-                    <b>{item.company_name}</b>
-                    <button onClick={() => editCompany(item)}>
-                      <Pencil size={15} />Edit
-                    </button>
-                  </div>
-                  <span>{item.country} · {item.product || item.product_category || '-'} · {item.type}</span>
-                  <small>Priority {item.priority || 3} · {item.verified ? 'Verified' : 'Not verified'}</small>
+        <section className="overview-grid">
+          <article className="panel progress-panel">
+            <h3>Request Progress Overview</h3>
+            <div className="stacked-progress">
+              {progressSegments.map((segment) => (
+                <span
+                  key={segment.key}
+                  className={`segment ${segment.colorClass}`}
+                  style={{ width: `${Math.max(segment.percent, segment.value ? 5 : 0)}%` }}
+                />
+              ))}
+            </div>
+            <div className="progress-legend">
+              {progressSegments.map((segment) => (
+                <div key={segment.key}>
+                  <span className={`dot ${segment.colorClass}`} />
+                  <b>{segment.label} ({segment.value})</b>
+                  <small>{dashboard.total ? `${segment.percent}%` : '0%'}</small>
                 </div>
               ))}
-
-              {!results.length && <p className="muted">Search results will appear here.</p>}
             </div>
+          </article>
+
+          <article className="panel distribution-panel">
+            <h3>Records by Progress</h3>
+            <div className="distribution-body">
+              <div className="donut" style={{ '--complete': `${dashboard.average * 3.6}deg` }}>
+                <span>{dashboard.average}%</span>
+              </div>
+              <div className="bucket-list">
+                {dashboard.bucketDefs.map((bucket) => (
+                  <div key={bucket.key}>
+                    <span className={`dot bucket-${bucket.key}`} />
+                    <b>{bucket.label}</b>
+                    <em>{bucket.count}</em>
+                    <small>{dashboard.total ? `${((bucket.count / dashboard.total) * 100).toFixed(2)}%` : '0.00%'}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section className="panel requests-panel">
+          <div className="section-title-row">
+            <h3>All Company Records</h3>
+            <button type="button" className="export-button">
+              <Download size={17} /> Export <ChevronDown size={15} />
+            </button>
+          </div>
+
+          <div className="filters-row">
+            <input value={query.country} onChange={(e) => setQuery({ ...query, country: e.target.value })} placeholder="All Countries" />
+            <input value={query.product} onChange={(e) => setQuery({ ...query, product: e.target.value })} placeholder="All Products" />
+            <input value={query.text} onChange={(e) => setQuery({ ...query, text: e.target.value })} placeholder="Keyword / Company" />
+            <select value={query.type} onChange={(e) => setQuery({ ...query, type: e.target.value })}>
+              <option value="">All Types</option>
+              {companyTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+            <select value={query.status} onChange={(e) => setQuery({ ...query, status: e.target.value })}>
+              <option value="">All Status</option>
+              <option value="Completed">Completed</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Not Started">Not Started</option>
+            </select>
+            <button type="button" className="filter-button" onClick={searchCompanies} disabled={loading}>
+              <RefreshCw size={16} /> {loading ? 'Searching...' : 'Filter'}
+            </button>
+            <button type="button" className="reset-button" onClick={resetSearch}>
+              <RotateCcw size={15} /> Reset
+            </button>
+          </div>
+
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Company</th>
+                  <th>Country</th>
+                  <th>Product</th>
+                  <th>Type</th>
+                  <th>Priority</th>
+                  <th>Progress</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayedResults.map((item, index) => {
+                  const percent = companyCompletionPercent(item);
+                  return (
+                    <tr key={item.company_id || `${item.company_name}-${index}`}>
+                      <td>{index + 1}</td>
+                      <td>
+                        <b>{item.company_name || '-'}</b>
+                        <small>{item.email || item.website || '-'}</small>
+                      </td>
+                      <td>{item.country || '-'}</td>
+                      <td>{item.product || item.product_category || '-'}</td>
+                      <td>{item.type || '-'}</td>
+                      <td>{item.priority || 3}</td>
+                      <td>
+                        <div className="table-progress"><span style={{ width: `${percent}%` }} /></div>
+                        <em>{percent}%</em>
+                      </td>
+                      <td><span className={`status-pill ${statusClass(percent)}`}>{statusLabel(percent)}</span></td>
+                      <td>
+                        <button type="button" className="view-button" onClick={() => editCompany(item)}>
+                          <Eye size={15} /> View Details
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {!displayedResults.length && (
+                  <tr>
+                    <td colSpan="9" className="empty-table">
+                      Search company records to view them here. Use the form below to add a new company.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="table-footer">
+            <span>Showing {displayedResults.length ? `1 to ${displayedResults.length}` : '0'} of {displayedResults.length} records</span>
+            <div className="pagination"><button disabled>‹</button><button className="active">1</button><button disabled>›</button><select defaultValue="10"><option>10</option><option>25</option><option>50</option></select></div>
+          </div>
+        </section>
+
+        <section className="entry-grid" id="company-entry-form">
+          <section className="panel form-panel">
+            <div className="section-title-row">
+              <h3>{isEditing ? 'Edit Company Entry' : 'Add Company Entry'}</h3>
+              {isEditing && (
+                <button type="button" className="reset-button" onClick={newCompany}>
+                  <XCircle size={17} /> Cancel Edit
+                </button>
+              )}
+            </div>
+
+            <label className="employee-label">
+              Employee Name
+              <input
+                value={employeeName}
+                onChange={(e) => setEmployeeName(e.target.value)}
+                placeholder="Example: Rajan / Priya"
+              />
+            </label>
+
+            <form onSubmit={saveCompany} className="grid-form">
+              <label>Country *<input value={form.country} onChange={(e) => setField('country', e.target.value)} placeholder="Malaysia" /></label>
+              <label>Product *<input value={form.product} onChange={(e) => setField('product', e.target.value)} placeholder="Readymade Garments" /></label>
+              <label className="span2">Company Name *<input value={form.company_name} onChange={(e) => setField('company_name', e.target.value)} placeholder="Padini Holdings Berhad" /></label>
+              <label className="span2">Company Briefing<textarea value={form.company_briefing} onChange={(e) => setField('company_briefing', e.target.value)} rows="3" placeholder="Very large textile/fashion network. Useful detail for report generation." /></label>
+              <label className="span2">Brands<textarea value={form.brands} onChange={(e) => setField('brands', e.target.value)} rows="2" placeholder="Padini, Seed, Vincci, PDI" /></label>
+              <label className="span2">Supply Requested<textarea value={form.supply_requested} onChange={(e) => setField('supply_requested', e.target.value)} rows="2" placeholder="budget fashion, private label garments, seasonal collections" /></label>
+              <label>Email<input value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder="buyer@example.com" /></label>
+              <label>Phone<input value={form.phone} onChange={(e) => setField('phone', e.target.value)} placeholder="+60123456789" /></label>
+              <label>Website<input value={form.website} onChange={(e) => setField('website', e.target.value)} placeholder="https://example.com" /></label>
+              <label>City<input value={form.city} onChange={(e) => setField('city', e.target.value)} placeholder="Kuala Lumpur" /></label>
+              <label className="span2">Address<textarea value={form.address} onChange={(e) => setField('address', e.target.value)} rows="2" /></label>
+
+              <label>
+                Type
+                <select value={form.type} onChange={(e) => setField('type', e.target.value)}>
+                  {companyTypes.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </label>
+
+              <label>
+                Priority
+                <select value={form.priority} onChange={(e) => setField('priority', e.target.value)}>
+                  <option value="1">1 - Highest</option>
+                  <option value="2">2 - High</option>
+                  <option value="3">3 - Normal</option>
+                  <option value="4">4 - Low</option>
+                  <option value="5">5 - Lowest</option>
+                </select>
+              </label>
+
+              <label>Contact Person<input value={form.contact_person} onChange={(e) => setField('contact_person', e.target.value)} /></label>
+              <label>Designation<input value={form.designation} onChange={(e) => setField('designation', e.target.value)} /></label>
+
+              <label>
+                Imports From India
+                <select value={form.imports_from_india} onChange={(e) => setField('imports_from_india', e.target.value)}>
+                  <option>Unknown</option>
+                  <option>Yes</option>
+                  <option>Likely</option>
+                  <option>No</option>
+                </select>
+              </label>
+
+              <label>Source Name<input value={form.source_name} onChange={(e) => setField('source_name', e.target.value)} placeholder="Company website / Directory / Employee research" /></label>
+              <label className="span2">Source URL<input value={form.source_url} onChange={(e) => setField('source_url', e.target.value)} placeholder="https://..." /></label>
+              <label className="span2">Internal Notes<textarea value={form.notes} onChange={(e) => setField('notes', e.target.value)} rows="2" /></label>
+
+              <label className="toggle"><input type="checkbox" checked={form.verified} onChange={(e) => setField('verified', e.target.checked)} /> Verified</label>
+              <label className="toggle"><input type="checkbox" checked={form.active} onChange={(e) => setField('active', e.target.checked)} /> Active</label>
+
+              <div className="actions span2">
+                <button className="primary" disabled={saving}>
+                  <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Company' : 'Save Company'}
+                </button>
+                <button type="button" className="secondary" onClick={newCompany}>
+                  <Plus size={18} />New Company
+                </button>
+                <button type="button" className="secondary disabled" title="Coming next">
+                  <Upload size={18} />Upload Excel
+                </button>
+              </div>
+            </form>
+
+            {status && <p className="status-message">{status}</p>}
           </section>
 
-          <section className="card preview">
-            <div className="card-title">Auto Generated Keys</div>
+          <aside className="panel preview-panel">
+            <h3><BarChart3 size={20} /> Auto Generated Keys</h3>
             <p><b>country_key:</b> {preview.country_key || '-'}</p>
             <p><b>product_key:</b> {preview.product_key || '-'}</p>
             <p><b>company_key:</b> {preview.company_key || '-'}</p>
             <p><b>Partition Key:</b> {preview.country_key && preview.product_key ? `${preview.country_key}#${preview.product_key}` : '-'}</p>
             <p><b>search_terms:</b> {(preview.search_terms || []).slice(0, 25).join(', ') || '-'}</p>
-          </section>
-        </aside>
+          </aside>
+        </section>
       </main>
     </div>
   );
@@ -376,12 +637,12 @@ function App() {
   const auth = useAuth();
 
   if (auth.isLoading) {
-    return <div className="page"><h2>Loading...</h2></div>;
+    return <div className="auth-shell"><section className="auth-card"><h2>Loading...</h2></section></div>;
   }
 
   if (auth.error) {
     const rawMessage = String(auth.error.message || '');
-  
+
     const friendlyMessage =
       rawMessage.toLowerCase().includes('access not approved') ||
       rawMessage.toLowerCase().includes('not approved') ||
@@ -390,10 +651,11 @@ function App() {
       rawMessage.toLowerCase().includes('presignup')
         ? 'This portal is restricted to approved RBR employee email IDs only. Please contact RBR admin if you need access.'
         : rawMessage || 'We could not complete sign-in. Please try again.';
-  
+
     return (
-      <div className="page">
-        <section className="card" style={{ maxWidth: 560, margin: '80px auto', textAlign: 'center' }}>
+      <div className="auth-shell">
+        <section className="auth-card">
+          <div className="auth-logo"><ShieldCheck size={34} /></div>
           <h1>Access not approved</h1>
           <p>{friendlyMessage}</p>
           <button className="primary" onClick={() => auth.signinRedirect()}>
@@ -406,8 +668,9 @@ function App() {
 
   if (!auth.isAuthenticated) {
     return (
-      <div className="page">
-        <section className="card" style={{ maxWidth: 520, margin: '80px auto', textAlign: 'center' }}>
+      <div className="auth-shell">
+        <section className="auth-card">
+          <div className="auth-logo"><Search size={34} /></div>
           <h1>RBR Employee Portal</h1>
           <p>Please sign in with your approved employee email.</p>
           <button className="primary" onClick={() => auth.signinRedirect()}>
