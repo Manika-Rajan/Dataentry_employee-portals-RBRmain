@@ -549,15 +549,16 @@ function PortalApp() {
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Company ID</th>
-                  <th>Company Name</th>
-                  <th>Country</th>
-                  <th>Product Key</th>
-                  <th>Type</th>
-                  <th>Brands</th>
-                  <th>Contact</th>
-                  <th>Supply Requested</th>
-                  <th>Completeness</th>
+                  <th>product_country_key</th>
+                  <th>company_id</th>
+                  <th>brands</th>
+                  <th>company_briefing</th>
+                  <th>company_name</th>
+                  <th>country</th>
+                  <th>email</th>
+                  <th>phone</th>
+                  <th>supply_requested</th>
+                  <th>type</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -570,27 +571,16 @@ function PortalApp() {
                     <React.Fragment key={rowKey}>
                       <tr>
                         <td>{index + 1}</td>
-                        <td><b>{item.company_id || '-'}</b><small>{item.product_country_key || '-'}</small></td>
-                        <td>
-                          <b>{item.company_name || '-'}</b>
-                          <small>{truncateText(item.company_briefing, 58)}</small>
-                        </td>
-                        <td>{getCompanyCountry(item)}</td>
-                        <td>
-                          <b>{getCompanyProduct(item)}</b>
-                          <small>{item.product_country_key || '-'}</small>
-                        </td>
-                        <td>{item.type || '-'}</td>
+                        <td><b>{item.product_country_key || '-'}</b></td>
+                        <td><b>{item.company_id || '-'}</b></td>
                         <td>{truncateText(item.brands, 52)}</td>
-                        <td>
-                          <b>{item.email || '-'}</b>
-                          <small>{item.phone || '-'}</small>
-                        </td>
+                        <td>{truncateText(item.company_briefing, 64)}</td>
+                        <td><b>{item.company_name || '-'}</b></td>
+                        <td>{item.country || '-'}</td>
+                        <td>{item.email || '-'}</td>
+                        <td>{item.phone || '-'}</td>
                         <td>{truncateText(item.supply_requested, 64)}</td>
-                        <td>
-                          <div className="table-progress"><span style={{ width: `${percent}%` }} /></div>
-                          <em>{percent}%</em>
-                        </td>
+                        <td>{item.type || '-'}</td>
                         <td>
                           <button type="button" className="view-button" onClick={() => setExpandedCompanyId(isExpanded ? '' : rowKey)}>
                             <Eye size={15} /> {isExpanded ? 'Hide' : 'View'} Details
@@ -600,15 +590,19 @@ function PortalApp() {
 
                       {isExpanded && (
                         <tr className="details-row">
-                          <td colSpan="11">
+                          <td colSpan="12">
                             <div className="details-grid">
-                              <div><span>Company Briefing</span><p>{item.company_briefing || '-'}</p></div>
-                              <div><span>Brands</span><p>{item.brands || '-'}</p></div>
-                              <div><span>Supply Requested</span><p>{item.supply_requested || '-'}</p></div>
-                              <div><span>Email</span><p>{item.email || '-'}</p></div>
-                              <div><span>Phone</span><p>{item.phone || '-'}</p></div>
-                              <div><span>Product Country Key</span><p>{item.product_country_key || '-'}</p></div>
-                              <div><span>Record Status</span><p><span className={`status-pill ${statusClass(percent)}`}>{statusLabel(percent)}</span></p></div>
+                              <div><span>product_country_key</span><p>{item.product_country_key || '-'}</p></div>
+                              <div><span>company_id</span><p>{item.company_id || '-'}</p></div>
+                              <div><span>brands</span><p>{item.brands || '-'}</p></div>
+                              <div><span>company_briefing</span><p>{item.company_briefing || '-'}</p></div>
+                              <div><span>company_name</span><p>{item.company_name || '-'}</p></div>
+                              <div><span>country</span><p>{item.country || '-'}</p></div>
+                              <div><span>email</span><p>{item.email || '-'}</p></div>
+                              <div><span>phone</span><p>{item.phone || '-'}</p></div>
+                              <div><span>supply_requested</span><p>{item.supply_requested || '-'}</p></div>
+                              <div><span>type</span><p>{item.type || '-'}</p></div>
+                              <div><span>record_completeness</span><p><span className={`status-pill ${statusClass(percent)}`}>{statusLabel(percent)} · {percent}%</span></p></div>
                               <div className="details-actions">
                                 <button type="button" className="filter-button" onClick={() => editCompany(item)}>
                                   <Pencil size={15} /> Edit This Record
@@ -624,7 +618,7 @@ function PortalApp() {
 
                 {!displayedResults.length && (
                   <tr>
-                    <td colSpan="11" className="empty-table">
+                    <td colSpan="12" className="empty-table">
                       {loading ? 'Loading company records from DynamoDB...' : hasLoadedRecords ? 'No matching company records found.' : 'Company records will appear here after loading.'}
                     </td>
                   </tr>
