@@ -225,6 +225,7 @@ function PortalApp() {
   const [hasLoadedRecords, setHasLoadedRecords] = useState(false);
   const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const [activeView, setActiveView] = useState('dashboard');
 
   const isEditing = Boolean(form.company_id);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
@@ -371,6 +372,16 @@ function PortalApp() {
     setForm(emptyForm);
   }
 
+  function openDashboard() {
+    setActiveView('dashboard');
+    setExpandedCompanyId('');
+  }
+
+  function openCompletedRecords() {
+    setActiveView('completedRecords');
+    setExpandedCompanyId('');
+  }
+
   const displayedResults = useMemo(() => {
     return results.filter((item) => {
       const percent = companyCompletionPercent(item);
@@ -407,6 +418,16 @@ function PortalApp() {
     return { total, completed, inProgress, notStarted, average, bucketDefs };
   }, [displayedResults]);
 
+  const completedRecords = useMemo(() => {
+    return displayedResults.filter((item) => companyCompletionPercent(item) >= 100);
+  }, [displayedResults]);
+
+  const tableRecords = activeView === 'completedRecords' ? completedRecords : displayedResults;
+  const tableTitle = activeView === 'completedRecords' ? 'Completed Records' : 'All Company Records';
+  const tableEmptyMessage = activeView === 'completedRecords'
+    ? 'No completed records found from the currently displayed company records.'
+    : 'No matching company records found.';
+
   const progressSegments = useMemo(() => {
     const total = dashboard.total || 1;
     return [
@@ -425,12 +446,27 @@ function PortalApp() {
         </div>
 
         <nav className="sidebar-nav">
-          <button className="nav-item active"><LayoutDashboard size={21} /> Dashboard</button>
-          <button className="nav-item"><ClipboardList size={21} /> Requests</button>
-          <button className="nav-item"><Users size={21} /> Associates</button>
-          <button className="nav-item"><FileText size={21} /> Reports</button>
-          <button className="nav-item"><Database size={21} /> Data Entry</button>
-          <button className="nav-item"><Settings size={21} /> Settings</button>
+          <button type="button" className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`} onClick={openDashboard}>
+            <LayoutDashboard size={21} /> Dashboard
+          </button>
+          <button type="button" className="nav-item"><ClipboardList size={21} /> Requests</button>
+          <div className="nav-group">
+            <button type="button" className={`nav-item ${activeView === 'completedRecords' ? 'parent-active' : ''}`}>
+              <Users size={21} /> Associates
+            </button>
+            <button
+              type="button"
+              className={`nav-sub-item ${activeView === 'completedRecords' ? 'active' : ''}`}
+              onClick={openCompletedRecords}
+            >
+              <CheckCircle2 size={18} />
+              <span>Completed Records</span>
+              <em>{dashboard.completed}</em>
+            </button>
+          </div>
+          <button type="button" className="nav-item"><FileText size={21} /> Reports</button>
+          <button type="button" className="nav-item"><Database size={21} /> Data Entry</button>
+          <button type="button" className="nav-item"><Settings size={21} /> Settings</button>
         </nav>
 
         <button type="button" className="nav-item logout" onClick={signOutRedirect}>
@@ -441,8 +477,12 @@ function PortalApp() {
       <main className="dashboard-main">
         <header className="dashboard-topbar">
           <div>
-            <h1>Company Data Entry Dashboard</h1>
-            <p>Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.</p>
+            <h1>{activeView === 'completedRecords' ? 'Completed Records' : 'Company Data Entry Dashboard'}</h1>
+            <p>
+              {activeView === 'completedRecords'
+                ? 'This segment shows only the records marked as completed from the company records currently displayed in the portal.'
+                : 'Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.'}
+            </p>
           </div>
 
           <div className="topbar-actions">
@@ -461,75 +501,93 @@ function PortalApp() {
           </div>
         </header>
 
-        <section className="stats-grid">
-          <div className="stat-card">
-            <div className="stat-icon icon-blue"><FileText size={27} /></div>
-            <div><p>Total Records</p><h2>{dashboard.total}</h2><span>DynamoDB records shown</span></div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon icon-green"><CheckCircle2 size={30} /></div>
-            <div><p>Completed Records</p><h2>{dashboard.completed}</h2><span>All key fields added</span></div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon icon-blue-soft"><Clock3 size={30} /></div>
-            <div><p>In Progress Records</p><h2>{dashboard.inProgress}</h2><span>Partially completed</span></div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon icon-orange"><PauseCircle size={30} /></div>
-            <div><p>Not Started</p><h2>{dashboard.notStarted}</h2><span>No data entered</span></div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-icon icon-purple"><TrendingUp size={30} /></div>
-            <div><p>Average Completion</p><h2>{dashboard.average}%</h2><span>Across displayed records</span></div>
-          </div>
-        </section>
+        {activeView === 'dashboard' && (
+          <>
+                    <section className="stats-grid">
+                      <div className="stat-card">
+                        <div className="stat-icon icon-blue"><FileText size={27} /></div>
+                        <div><p>Total Records</p><h2>{dashboard.total}</h2><span>DynamoDB records shown</span></div>
+                      </div>
+                      <div className="stat-card">
+                        <div className="stat-icon icon-green"><CheckCircle2 size={30} /></div>
+                        <div><p>Completed Records</p><h2>{dashboard.completed}</h2><span>All key fields added</span></div>
+                      </div>
+                      <div className="stat-card">
+                        <div className="stat-icon icon-blue-soft"><Clock3 size={30} /></div>
+                        <div><p>In Progress Records</p><h2>{dashboard.inProgress}</h2><span>Partially completed</span></div>
+                      </div>
+                      <div className="stat-card">
+                        <div className="stat-icon icon-orange"><PauseCircle size={30} /></div>
+                        <div><p>Not Started</p><h2>{dashboard.notStarted}</h2><span>No data entered</span></div>
+                      </div>
+                      <div className="stat-card">
+                        <div className="stat-icon icon-purple"><TrendingUp size={30} /></div>
+                        <div><p>Average Completion</p><h2>{dashboard.average}%</h2><span>Across displayed records</span></div>
+                      </div>
+                    </section>
 
-        <section className="overview-grid">
-          <article className="panel progress-panel">
-            <h3>Request Progress Overview</h3>
-            <div className="stacked-progress">
-              {progressSegments.map((segment) => (
-                <span
-                  key={segment.key}
-                  className={`segment ${segment.colorClass}`}
-                  style={{ width: `${Math.max(segment.percent, segment.value ? 5 : 0)}%` }}
-                />
-              ))}
-            </div>
-            <div className="progress-legend">
-              {progressSegments.map((segment) => (
-                <div key={segment.key}>
-                  <span className={`dot ${segment.colorClass}`} />
-                  <b>{segment.label} ({segment.value})</b>
-                  <small>{dashboard.total ? `${segment.percent}%` : '0%'}</small>
-                </div>
-              ))}
-            </div>
-          </article>
+                    <section className="overview-grid">
+                      <article className="panel progress-panel">
+                        <h3>Request Progress Overview</h3>
+                        <div className="stacked-progress">
+                          {progressSegments.map((segment) => (
+                            <span
+                              key={segment.key}
+                              className={`segment ${segment.colorClass}`}
+                              style={{ width: `${Math.max(segment.percent, segment.value ? 5 : 0)}%` }}
+                            />
+                          ))}
+                        </div>
+                        <div className="progress-legend">
+                          {progressSegments.map((segment) => (
+                            <div key={segment.key}>
+                              <span className={`dot ${segment.colorClass}`} />
+                              <b>{segment.label} ({segment.value})</b>
+                              <small>{dashboard.total ? `${segment.percent}%` : '0%'}</small>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
 
-          <article className="panel distribution-panel">
-            <h3>Records by Progress</h3>
-            <div className="distribution-body">
-              <div className="donut" style={{ '--complete': `${dashboard.average * 3.6}deg` }}>
-                <span>{dashboard.average}%</span>
-              </div>
-              <div className="bucket-list">
-                {dashboard.bucketDefs.map((bucket) => (
-                  <div key={bucket.key}>
-                    <span className={`dot bucket-${bucket.key}`} />
-                    <b>{bucket.label}</b>
-                    <em>{bucket.count}</em>
-                    <small>{dashboard.total ? `${((bucket.count / dashboard.total) * 100).toFixed(2)}%` : '0.00%'}</small>
-                  </div>
-                ))}
-              </div>
+                      <article className="panel distribution-panel">
+                        <h3>Records by Progress</h3>
+                        <div className="distribution-body">
+                          <div className="donut" style={{ '--complete': `${dashboard.average * 3.6}deg` }}>
+                            <span>{dashboard.average}%</span>
+                          </div>
+                          <div className="bucket-list">
+                            {dashboard.bucketDefs.map((bucket) => (
+                              <div key={bucket.key}>
+                                <span className={`dot bucket-${bucket.key}`} />
+                                <b>{bucket.label}</b>
+                                <em>{bucket.count}</em>
+                                <small>{dashboard.total ? `${((bucket.count / dashboard.total) * 100).toFixed(2)}%` : '0.00%'}</small>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </article>
+                    </section>
+
+          </>
+        )}
+
+        {activeView === 'completedRecords' && (
+          <section className="panel completed-records-intro">
+            <div>
+              <h3><CheckCircle2 size={20} /> Completed Records</h3>
+              <p>Showing records that have 100% completion based on the currently displayed DynamoDB records and active filters.</p>
             </div>
-          </article>
-        </section>
+            <div className="completed-records-count">
+              <span>{completedRecords.length}</span>
+              <small>completed records</small>
+            </div>
+          </section>
+        )}
 
         <section className="panel requests-panel">
           <div className="section-title-row">
-            <h3>All Company Records</h3>
+            <h3>{tableTitle}</h3>
             <div className="table-actions">
               <button type="button" className="add-record-button" onClick={newCompany}>
                 <Plus size={17} /> Add Record
@@ -583,7 +641,7 @@ function PortalApp() {
                 </tr>
               </thead>
               <tbody>
-                {displayedResults.map((item, index) => {
+                {tableRecords.map((item, index) => {
                   const percent = companyCompletionPercent(item);
                   const rowKey = recordKey(item, index);
                   const isExpanded = expandedCompanyId === rowKey;
@@ -636,10 +694,10 @@ function PortalApp() {
                   );
                 })}
 
-                {!displayedResults.length && (
+                {!tableRecords.length && (
                   <tr>
                     <td colSpan="12" className="empty-table">
-                      {loading ? 'Loading company records from DynamoDB...' : hasLoadedRecords ? 'No matching company records found.' : 'Company records will appear here after loading.'}
+                      {loading ? 'Loading company records from DynamoDB...' : hasLoadedRecords ? tableEmptyMessage : 'Company records will appear here after loading.'}
                     </td>
                   </tr>
                 )}
@@ -648,7 +706,7 @@ function PortalApp() {
           </div>
 
           <div className="table-footer">
-            <span>Showing {displayedResults.length ? `1 to ${displayedResults.length}` : '0'} of {displayedResults.length} records</span>
+            <span>Showing {tableRecords.length ? `1 to ${tableRecords.length}` : '0'} of {tableRecords.length} records</span>
             <div className="pagination"><button disabled>‹</button><button className="active">1</button><button disabled>›</button><select defaultValue="10"><option>10</option><option>25</option><option>50</option></select></div>
           </div>
         </section>
