@@ -477,7 +477,7 @@ function PortalApp() {
       <main className="dashboard-main">
         <header className="dashboard-topbar">
           <div>
-            <h1>{activeView === 'completedRecords' ? 'Completed Records' : 'Company Data Entry Dashboard'}</h1>
+            <h1>{activeView === 'completedRecords' ? 'Completed Records' : 'Priya's Company Data Entry Dashboard'}</h1>
             <p>
               {activeView === 'completedRecords'
                 ? 'This segment shows only the records marked as completed from the company records currently displayed in the portal.'
