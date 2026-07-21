@@ -59,7 +59,37 @@ const emptyForm = {
   source_name: '',
   source_url: '',
   notes: '',
+  request_id: '',
+  request_batch_id: '',
 };
+
+const emptyRequestForm = {
+  product: '',
+  countries_text: '',
+  target_companies_per_country: '10',
+  priority: '3',
+  assigned_to: '',
+  due_date: '',
+  instructions: '',
+};
+
+function parseCountries(value) {
+  const seen = new Set();
+  return String(value || '')
+    .split(/[,;\n]/)
+    .map((country) => country.trim().replace(/\s+/g, ' '))
+    .filter((country) => {
+      if (!country) return false;
+      const key = country.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function requestIdentity(item = {}, index = 0) {
+  return item.request_id || item.request_item_id || `${item.batch_id || 'request'}-${item.product_country_key || index}`;
+}
 
 function normalizeUnderscore(value) {
   return String(value || '')
@@ -147,6 +177,47 @@ function normalizeCompanyRecord(item = {}) {
   };
 }
 
+function normalizeRequestRecord(item = {}, index = 0) {
+  const product = item.product || item.product_name || titleFromKeyPart(item.product_key);
+  const country = item.country || item.country_name || titleFromKeyPart(item.country_key);
+  const productKey = item.product_key || normalizeUnderscore(product);
+  const countryKey = item.country_key || normalizeUnderscore(country);
+
+  return {
+    ...item,
+    request_id: requestIdentity(item, index),
+    batch_id: item.batch_id || item.request_batch_id || '',
+    product,
+    country,
+    product_key: productKey,
+    country_key: countryKey,
+    product_country_key: item.product_country_key || `${productKey}#${countryKey}`,
+    target_companies: Number(item.target_companies || item.target_companies_per_country || 10),
+    priority: Number(item.priority || 3),
+    status: item.status || 'Open',
+  };
+}
+
+function expandRequestRecords(items = []) {
+  return items.flatMap((item, itemIndex) => {
+    if (item.country || !Array.isArray(item.countries)) {
+      return [normalizeRequestRecord(item, itemIndex)];
+    }
+
+    return item.countries.map((country, countryIndex) => normalizeRequestRecord({
+      ...item,
+      country: typeof country === 'string' ? country : country.country,
+      country_key: typeof country === 'string' ? normalizeUnderscore(country) : country.country_key,
+      request_id: typeof country === 'string'
+        ? `${item.request_id || item.batch_id || `request-${itemIndex}`}#${normalizeUnderscore(country)}`
+        : country.request_id,
+      target_companies: typeof country === 'string'
+        ? item.target_companies_per_country
+        : country.target_companies || item.target_companies_per_country,
+    }, countryIndex));
+  });
+}
+
 function truncateText(value, max = 70) {
   const text = String(value || '').trim();
   if (!text) return '-';
@@ -226,6 +297,15 @@ function PortalApp() {
   const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [activeView, setActiveView] = useState('dashboard');
+  const [entryRequest, setEntryRequest] = useState(null);
+  const [requests, setRequests] = useState([]);
+  const [requestForm, setRequestForm] = useState(emptyRequestForm);
+  const [requestMessage, setRequestMessage] = useState('');
+  const [loadingRequests, setLoadingRequests] = useState(false);
+  const [savingRequest, setSavingRequest] = useState(false);
+  const [hasLoadedRequests, setHasLoadedRequests] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [expandedRequestId, setExpandedRequestId] = useState('');
 
   const isEditing = Boolean(form.company_id);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
@@ -258,6 +338,7 @@ function PortalApp() {
 
   async function saveCompany(e) {
     e.preventDefault();
+    const linkedRequest = entryRequest;
     setStatus('');
     const error = validate();
     if (error) return setStatus(error);
@@ -289,9 +370,16 @@ function PortalApp() {
           }
           return [normalizedItem, ...prev];
         });
+      } else if (linkedRequest) {
+        await loadCompanies({}, 'request-progress');
+      }
+
+      if (linkedRequest) {
+        setRequestMessage(`${payload.company_name} saved for ${linkedRequest.product} in ${linkedRequest.country}.`);
       }
 
       setForm(emptyForm);
+      setEntryRequest(null);
       setIsRecordModalOpen(false);
       setShowAdvancedFields(false);
     } catch (err) {
@@ -332,6 +420,96 @@ function PortalApp() {
     }
   }
 
+  async function loadRequests(mode = 'load') {
+    setLoadingRequests(true);
+    setRequestMessage('');
+
+    try {
+      const data = await apiFetch('/employee-data-entry-requests');
+      const items = expandRequestRecords(data.items || data.requests || []);
+      setRequests(items);
+      setHasLoadedRequests(true);
+      setExpandedRequestId('');
+
+      if (!items.length) {
+        setRequestMessage('No collection requests have been created yet.');
+      } else if (mode === 'open') {
+        setRequestMessage(`Loaded ${items.length} country request${items.length === 1 ? '' : 's'}.`);
+      }
+    } catch (err) {
+      setHasLoadedRequests(true);
+      setRequestMessage(err.message || 'Collection requests could not be loaded.');
+    } finally {
+      setLoadingRequests(false);
+    }
+  }
+
+  function validateRequest() {
+    const countries = parseCountries(requestForm.countries_text);
+    const target = Number(requestForm.target_companies_per_country);
+
+    if (!employeeName.trim()) return 'Please enter the employee name before creating a request.';
+    if (!requestForm.product.trim()) return 'Product name is mandatory.';
+    if (!countries.length) return 'Please enter at least one country.';
+    if (!Number.isInteger(target) || target < 1) return 'Target companies per country must be a whole number greater than zero.';
+    return '';
+  }
+
+  async function saveCollectionRequest(e) {
+    e.preventDefault();
+    setRequestMessage('');
+    const error = validateRequest();
+    if (error) return setRequestMessage(error);
+
+    const countries = parseCountries(requestForm.countries_text);
+    const now = new Date().toISOString();
+    const payload = {
+      product: requestForm.product.trim(),
+      product_key: normalizeUnderscore(requestForm.product),
+      countries,
+      country_keys: countries.map(normalizeUnderscore),
+      target_companies_per_country: Number(requestForm.target_companies_per_country),
+      priority: Number(requestForm.priority || 3),
+      assigned_to: requestForm.assigned_to.trim(),
+      due_date: requestForm.due_date || '',
+      instructions: requestForm.instructions.trim(),
+      status: 'Open',
+      created_by: employeeName.trim(),
+      employee_email: employeeEmail,
+      created_at: now,
+      updated_at: now,
+    };
+
+    localStorage.setItem('rbr_employee_name', employeeName.trim());
+    setSavingRequest(true);
+
+    try {
+      const data = await apiFetch('/employee-data-entry-requests', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      const created = expandRequestRecords(data.items || data.requests || (data.item ? [data.item] : []));
+      if (created.length) {
+        setRequests((previous) => {
+          const map = new Map(previous.map((item) => [item.request_id, item]));
+          created.forEach((item) => map.set(item.request_id, item));
+          return Array.from(map.values());
+        });
+      } else {
+        await loadRequests();
+      }
+
+      setRequestMessage(`Created ${countries.length} country request${countries.length === 1 ? '' : 's'} for ${requestForm.product.trim()}.`);
+      setRequestForm(emptyRequestForm);
+      setIsRequestModalOpen(false);
+    } catch (err) {
+      setRequestMessage(err.message || 'Collection request could not be created.');
+    } finally {
+      setSavingRequest(false);
+    }
+  }
+
   async function searchCompanies() {
     await loadCompanies(query, 'filter');
   }
@@ -345,6 +523,7 @@ function PortalApp() {
 
   function editCompany(item) {
     const normalized = normalizeCompanyRecord(item);
+    setEntryRequest(null);
     setForm({
       ...emptyForm,
       ...normalized,
@@ -359,6 +538,7 @@ function PortalApp() {
   }
 
   function newCompany() {
+    setEntryRequest(null);
     setForm(emptyForm);
     setShowAdvancedFields(false);
     setIsRecordModalOpen(true);
@@ -369,12 +549,51 @@ function PortalApp() {
     if (saving) return;
     setIsRecordModalOpen(false);
     setShowAdvancedFields(false);
+    setEntryRequest(null);
     setForm(emptyForm);
+  }
+
+  function addCompanyFromRequest(request) {
+    setEntryRequest(request);
+    setForm({
+      ...emptyForm,
+      request_id: request.request_id,
+      request_batch_id: request.batch_id || '',
+      product: request.product,
+      country: request.country,
+      priority: String(request.priority || 3),
+      notes: request.instructions || '',
+    });
+    setShowAdvancedFields(false);
+    setIsRecordModalOpen(true);
+    setStatus(`Adding ${request.product} importer for ${request.country}.`);
+  }
+
+  async function viewRequestCompanies(request) {
+    const nextQuery = {
+      country: request.country,
+      product: request.product,
+      text: '',
+      type: '',
+      status: '',
+    };
+    setQuery(nextQuery);
+    setActiveView('dashboard');
+    await loadCompanies(nextQuery, 'filter');
   }
 
   function openDashboard() {
     setActiveView('dashboard');
     setExpandedCompanyId('');
+  }
+
+  async function openRequests() {
+    setActiveView('requests');
+    setExpandedCompanyId('');
+    await Promise.all([
+      loadCompanies({}, 'request-progress'),
+      loadRequests('open'),
+    ]);
   }
 
   function openCompletedRecords() {
@@ -428,6 +647,38 @@ function PortalApp() {
     ? 'No completed records found from the currently displayed company records.'
     : 'No matching company records found.';
 
+  const requestRows = useMemo(() => {
+    return requests.map((request) => {
+      const matching = results.filter((company) => (
+        normalizeUnderscore(getCompanyProduct(company)) === normalizeUnderscore(request.product) &&
+        normalizeUnderscore(getCompanyCountry(company)) === normalizeUnderscore(request.country)
+      ));
+      const completedDetails = matching.filter((company) => companyCompletionPercent(company) >= 100).length;
+      const collected = matching.length;
+      const target = Math.max(Number(request.target_companies || 1), 1);
+      const percent = Math.min(100, Math.round((collected / target) * 100));
+      const derivedStatus = collected >= target ? 'Completed' : collected > 0 ? 'In Progress' : request.status || 'Open';
+
+      return {
+        ...request,
+        collected,
+        completedDetails,
+        percent,
+        derivedStatus,
+      };
+    });
+  }, [requests, results]);
+
+  const requestStats = useMemo(() => {
+    const total = requestRows.length;
+    const completed = requestRows.filter((item) => item.derivedStatus === 'Completed').length;
+    const inProgress = requestRows.filter((item) => item.derivedStatus === 'In Progress').length;
+    const open = Math.max(total - completed - inProgress, 0);
+    const countries = new Set(requestRows.map((item) => normalizeUnderscore(item.country)).filter(Boolean)).size;
+    const targetCompanies = requestRows.reduce((sum, item) => sum + Number(item.target_companies || 0), 0);
+    return { total, completed, inProgress, open, countries, targetCompanies };
+  }, [requestRows]);
+
   const progressSegments = useMemo(() => {
     const total = dashboard.total || 1;
     return [
@@ -449,7 +700,7 @@ function PortalApp() {
           <button type="button" className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`} onClick={openDashboard}>
             <LayoutDashboard size={21} /> Dashboard
           </button>
-          <button type="button" className="nav-item"><ClipboardList size={21} /> Requests</button>
+          <button type="button" className={`nav-item ${activeView === 'requests' ? 'active' : ''}`} onClick={openRequests}><ClipboardList size={21} /> Requests</button>
           <div className="nav-group">
             <button type="button" className={`nav-item ${activeView === 'completedRecords' ? 'parent-active' : ''}`}>
               <Users size={21} /> Associates
@@ -477,11 +728,13 @@ function PortalApp() {
       <main className="dashboard-main">
         <header className="dashboard-topbar">
           <div>
-            <h1>{activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
+            <h1>{activeView === 'requests' ? 'Import Company Collection Requests' : activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
             <p>
-              {activeView === 'completedRecords'
-                ? 'This segment shows only the records marked as completed from the company records currently displayed in the portal.'
-                : 'Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.'}
+              {activeView === 'requests'
+                ? 'Create one product request across multiple countries, track the target for each country, and open a prefilled company-entry form for associates.'
+                : activeView === 'completedRecords'
+                  ? 'This segment shows only the records marked as completed from the company records currently displayed in the portal.'
+                  : 'Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.'}
             </p>
           </div>
 
@@ -572,6 +825,135 @@ function PortalApp() {
           </>
         )}
 
+        {activeView === 'requests' && (
+          <>
+            <section className="stats-grid">
+              <div className="stat-card">
+                <div className="stat-icon icon-blue"><ClipboardList size={27} /></div>
+                <div><p>Country Requests</p><h2>{requestStats.total}</h2><span>Product-country assignments</span></div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-icon icon-green"><CheckCircle2 size={30} /></div>
+                <div><p>Completed Targets</p><h2>{requestStats.completed}</h2><span>Target company count reached</span></div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-icon icon-blue-soft"><Clock3 size={30} /></div>
+                <div><p>In Progress</p><h2>{requestStats.inProgress}</h2><span>Some companies collected</span></div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-icon icon-orange"><PauseCircle size={30} /></div>
+                <div><p>Open</p><h2>{requestStats.open}</h2><span>Collection not started</span></div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-icon icon-purple"><TrendingUp size={30} /></div>
+                <div><p>Total Target</p><h2>{requestStats.targetCompanies}</h2><span>Across {requestStats.countries} countries</span></div>
+              </div>
+            </section>
+
+            <section className="panel requests-panel">
+              <div className="section-title-row">
+                <div>
+                  <h3>Product and Country Collection Plan</h3>
+                  <p style={{ margin: '6px 0 0', color: '#667085' }}>Each country becomes a separate trackable request under the selected product.</p>
+                </div>
+                <div className="table-actions">
+                  <button type="button" className="add-record-button" onClick={() => { setRequestForm(emptyRequestForm); setIsRequestModalOpen(true); setRequestMessage(''); }}>
+                    <Plus size={17} /> New Request
+                  </button>
+                  <button type="button" className="export-button" onClick={() => loadRequests('open')} disabled={loadingRequests}>
+                    <RefreshCw size={17} /> {loadingRequests ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                </div>
+              </div>
+
+              {requestMessage && <p className="status-message table-status">{requestMessage}</p>}
+
+              <div className="table-wrap">
+                <table className="data-table company-records-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Product</th>
+                      <th>Country</th>
+                      <th>Target</th>
+                      <th>Collected</th>
+                      <th>Complete Details</th>
+                      <th>Progress</th>
+                      <th>Status</th>
+                      <th>Assigned To</th>
+                      <th>Due Date</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {requestRows.map((request, index) => {
+                      const isExpanded = expandedRequestId === request.request_id;
+                      return (
+                        <React.Fragment key={request.request_id}>
+                          <tr>
+                            <td>{index + 1}</td>
+                            <td><b>{request.product || '-'}</b></td>
+                            <td><b>{request.country || '-'}</b></td>
+                            <td>{request.target_companies}</td>
+                            <td>{request.collected}</td>
+                            <td>{request.completedDetails}</td>
+                            <td>
+                              <div style={{ minWidth: 120 }}>
+                                <div style={{ height: 8, borderRadius: 999, background: '#e9edf5', overflow: 'hidden' }}>
+                                  <span style={{ display: 'block', width: `${request.percent}%`, height: '100%', background: request.percent >= 100 ? '#16a34a' : '#2563eb' }} />
+                                </div>
+                                <small>{request.percent}%</small>
+                              </div>
+                            </td>
+                            <td><span className={`status-pill ${request.derivedStatus === 'Completed' ? 'status-completed' : request.derivedStatus === 'In Progress' ? 'status-progress' : 'status-not-started'}`}>{request.derivedStatus}</span></td>
+                            <td>{request.assigned_to || 'Any associate'}</td>
+                            <td>{request.due_date || '-'}</td>
+                            <td>
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                <button type="button" className="filter-button" onClick={() => addCompanyFromRequest(request)}><Plus size={15} /> Add Company</button>
+                                <button type="button" className="view-button" onClick={() => setExpandedRequestId(isExpanded ? '' : request.request_id)}><Eye size={15} /> {isExpanded ? 'Hide' : 'Details'}</button>
+                              </div>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="details-row">
+                              <td colSpan="11">
+                                <div className="details-grid">
+                                  <div><span>Request ID</span><p>{request.request_id}</p></div>
+                                  <div><span>Batch ID</span><p>{request.batch_id || '-'}</p></div>
+                                  <div><span>Product-country key</span><p>{request.product_country_key}</p></div>
+                                  <div><span>Priority</span><p>{request.priority}</p></div>
+                                  <div><span>Created By</span><p>{request.created_by || '-'}</p></div>
+                                  <div><span>Instructions</span><p>{request.instructions || '-'}</p></div>
+                                  <div className="details-actions">
+                                    <button type="button" className="filter-button" onClick={() => viewRequestCompanies(request)}><Eye size={15} /> View Collected Companies</button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+
+                    {!requestRows.length && (
+                      <tr>
+                        <td colSpan="11" className="empty-table">
+                          {loadingRequests ? 'Loading collection requests...' : hasLoadedRequests ? 'No collection requests found.' : 'Open this segment or create the first request.'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="table-footer">
+                <span>Showing {requestRows.length} country request{requestRows.length === 1 ? '' : 's'}</span>
+              </div>
+            </section>
+          </>
+        )}
+
         {activeView === 'completedRecords' && (
           <section className="panel completed-records-intro">
             <div>
@@ -585,6 +967,7 @@ function PortalApp() {
           </section>
         )}
 
+        {activeView !== 'requests' && (
         <section className="panel requests-panel">
           <div className="section-title-row">
             <h3>{tableTitle}</h3>
@@ -710,6 +1093,78 @@ function PortalApp() {
             <div className="pagination"><button disabled>‹</button><button className="active">1</button><button disabled>›</button><select defaultValue="10"><option>10</option><option>25</option><option>50</option></select></div>
           </div>
         </section>
+        )}
+
+        {isRequestModalOpen && (
+          <div className="modal-overlay" role="presentation">
+            <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="request-modal-title">
+              <div className="modal-head">
+                <div>
+                  <h3 id="request-modal-title">Create Importer Collection Request</h3>
+                  <p>Enter one product and all countries required. The backend will create one trackable request per country.</p>
+                </div>
+                <button type="button" className="modal-close" onClick={() => !savingRequest && setIsRequestModalOpen(false)} aria-label="Close popup">
+                  <XCircle size={22} />
+                </button>
+              </div>
+
+              <label className="employee-label">
+                Request Created By
+                <input value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} placeholder="Example: Rajan / Priya" />
+              </label>
+
+              <form onSubmit={saveCollectionRequest} className="modal-form">
+                <label className="span2">Product Name *
+                  <input value={requestForm.product} onChange={(e) => setRequestForm({ ...requestForm, product: e.target.value })} placeholder="Example: Readymade Garments" />
+                </label>
+                <label className="span2">Countries *
+                  <textarea value={requestForm.countries_text} onChange={(e) => setRequestForm({ ...requestForm, countries_text: e.target.value })} rows="5" placeholder={'Malaysia\nSingapore\nUnited Arab Emirates\nSaudi Arabia'} />
+                  <small>Enter one country per line, or separate countries with commas.</small>
+                </label>
+                <label>Target Companies Per Country *
+                  <input type="number" min="1" step="1" value={requestForm.target_companies_per_country} onChange={(e) => setRequestForm({ ...requestForm, target_companies_per_country: e.target.value })} />
+                </label>
+                <label>Priority
+                  <select value={requestForm.priority} onChange={(e) => setRequestForm({ ...requestForm, priority: e.target.value })}>
+                    <option value="1">1 - Highest</option>
+                    <option value="2">2 - High</option>
+                    <option value="3">3 - Normal</option>
+                    <option value="4">4 - Low</option>
+                    <option value="5">5 - Lowest</option>
+                  </select>
+                </label>
+                <label>Assign To
+                  <input value={requestForm.assigned_to} onChange={(e) => setRequestForm({ ...requestForm, assigned_to: e.target.value })} placeholder="Employee name or leave blank" />
+                </label>
+                <label>Due Date
+                  <input type="date" value={requestForm.due_date} onChange={(e) => setRequestForm({ ...requestForm, due_date: e.target.value })} />
+                </label>
+                <label className="span2">Research Instructions
+                  <textarea value={requestForm.instructions} onChange={(e) => setRequestForm({ ...requestForm, instructions: e.target.value })} rows="3" placeholder="Example: Focus on active importers, distributors, retail chains and buying houses. Verify the source URL." />
+                </label>
+
+                <div className="mini-preview span2">
+                  <h4><BarChart3 size={17} /> Request Preview</h4>
+                  <div className="mini-preview-grid">
+                    <p><b>Product key:</b> {normalizeUnderscore(requestForm.product) || '-'}</p>
+                    <p><b>Countries:</b> {parseCountries(requestForm.countries_text).length}</p>
+                    <p><b>Total target:</b> {parseCountries(requestForm.countries_text).length * Number(requestForm.target_companies_per_country || 0)}</p>
+                    <p><b>Country list:</b> {parseCountries(requestForm.countries_text).join(', ') || '-'}</p>
+                  </div>
+                </div>
+
+                {requestMessage && <p className="status-message span2">{requestMessage}</p>}
+
+                <div className="modal-actions span2">
+                  <button type="button" className="secondary" onClick={() => setIsRequestModalOpen(false)} disabled={savingRequest}>Cancel</button>
+                  <button className="primary" disabled={savingRequest}>
+                    <Save size={18} /> {savingRequest ? 'Creating...' : 'Create Country Requests'}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
 
         {isRecordModalOpen && (
           <div className="modal-overlay" role="presentation">
@@ -734,14 +1189,25 @@ function PortalApp() {
               </label>
 
               <form onSubmit={saveCompany} className="modal-form">
+                {entryRequest && (
+                  <div className="mini-preview span2">
+                    <h4><ClipboardList size={17} /> Linked Collection Request</h4>
+                    <div className="mini-preview-grid">
+                      <p><b>Product:</b> {entryRequest.product}</p>
+                      <p><b>Country:</b> {entryRequest.country}</p>
+                      <p><b>Target:</b> {entryRequest.target_companies} companies</p>
+                      <p><b>Request ID:</b> {entryRequest.request_id}</p>
+                    </div>
+                  </div>
+                )}
                 <label>company_id<input value={form.company_id} onChange={(e) => setField('company_id', e.target.value)} placeholder="MY000002 or leave blank if Lambda generates" disabled={isEditing} /></label>
                 <label>type
                   <select value={form.type} onChange={(e) => setField('type', e.target.value)}>
                     {companyTypes.map((t) => <option key={t}>{t}</option>)}
                   </select>
                 </label>
-                <label>country *<input value={form.country} onChange={(e) => setField('country', e.target.value)} placeholder="Malaysia" /></label>
-                <label>product *<input value={form.product} onChange={(e) => setField('product', e.target.value)} placeholder="Readymade Garments" /></label>
+                <label>country *<input value={form.country} onChange={(e) => setField('country', e.target.value)} placeholder="Malaysia" readOnly={Boolean(entryRequest && !isEditing)} /></label>
+                <label>product *<input value={form.product} onChange={(e) => setField('product', e.target.value)} placeholder="Readymade Garments" readOnly={Boolean(entryRequest && !isEditing)} /></label>
                 <label className="span2">company_name *<input value={form.company_name} onChange={(e) => setField('company_name', e.target.value)} placeholder="Padini Holdings Berhad" /></label>
                 <label className="span2">brands<textarea value={form.brands} onChange={(e) => setField('brands', e.target.value)} rows="2" placeholder="Padini, Seed, Vincci, PDI" /></label>
                 <label>email<input value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder="purchasing@example.com" /></label>
