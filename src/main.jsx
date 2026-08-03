@@ -31,7 +31,22 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+const RAW_API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ||
+  'https://jp1bupouyl.execute-api.ap-south-1.amazonaws.com/prod'
+).replace(/\/+$/, '');
+
+// Accept either the API root or a mistakenly saved full resource URL.
+// Examples supported:
+//   https://...amazonaws.com/prod
+//   https://...amazonaws.com/prod/employee-data-entry
+//   https://...amazonaws.com/prod/employee-data-entry-requests
+const API_ROOT = RAW_API_BASE
+  .replace(/\/employee-data-entry-requests$/, '')
+  .replace(/\/employee-data-entry$/, '');
+
+const COMPANY_API_URL = `${API_ROOT}/employee-data-entry`;
+const REQUESTS_API_URL = `${API_ROOT}/employee-data-entry-requests`;
 const PORTAL_KEY = import.meta.env.VITE_EMPLOYEE_PORTAL_KEY || '';
 
 const companyTypes = ['Importer', 'Retail Chain', 'Retailer', 'Distributor', 'Buying House', 'Wholesaler', 'Sourcing Agent', 'Agent', 'Ecommerce', 'Manufacturer', 'Other'];
@@ -228,8 +243,8 @@ function recordKey(item, index = 0) {
   return item?.company_id || `${item?.product_country_key || 'record'}-${index}`;
 }
 
-async function apiFetch(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function apiFetch(url, options = {}) {
+  const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -352,12 +367,12 @@ function PortalApp() {
         employee_email: employeeEmail,
       };
 
-      const path = isEditing
-        ? `/employee-data-entry/${encodeURIComponent(form.company_id)}`
-        : '/employee-data-entry';
+      const url = isEditing
+        ? `${COMPANY_API_URL}/${encodeURIComponent(form.company_id)}`
+        : COMPANY_API_URL;
 
       const method = isEditing ? 'PUT' : 'POST';
-      const data = await apiFetch(path, { method, body: JSON.stringify(payload) });
+      const data = await apiFetch(url, { method, body: JSON.stringify(payload) });
 
       setStatus(isEditing ? 'Company updated successfully.' : 'Company saved successfully.');
 
@@ -401,7 +416,7 @@ function PortalApp() {
       if (filters.type) params.set('type', filters.type);
 
       const queryString = params.toString();
-      const data = await apiFetch(`/employee-data-entry${queryString ? `?${queryString}` : ''}`);
+      const data = await apiFetch(`${COMPANY_API_URL}${queryString ? `?${queryString}` : ''}`);
       const items = (data.items || []).map(normalizeCompanyRecord);
 
       setResults(items);
@@ -425,7 +440,7 @@ function PortalApp() {
     setRequestMessage('');
 
     try {
-      const data = await apiFetch('/employee-data-entry-requests');
+      const data = await apiFetch(REQUESTS_API_URL);
       const items = expandRequestRecords(data.items || data.requests || []);
       setRequests(items);
       setHasLoadedRequests(true);
@@ -484,7 +499,7 @@ function PortalApp() {
     setSavingRequest(true);
 
     try {
-      const data = await apiFetch('/employee-data-entry-requests', {
+      const data = await apiFetch(REQUESTS_API_URL, {
         method: 'POST',
         body: JSON.stringify(payload),
       });
