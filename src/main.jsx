@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthProvider, useAuth } from 'react-oidc-context';
 import {
@@ -29,6 +29,7 @@ import {
   TrendingUp,
   RotateCcw,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import './styles.css';
 
 const RAW_API_BASE = (
@@ -87,6 +88,123 @@ const emptyRequestForm = {
   due_date: '',
   instructions: '',
 };
+
+
+const EXCEL_BATCH_SIZE = 25;
+const EXCEL_COLUMNS = [
+  'company_id',
+  'company_name',
+  'country',
+  'product',
+  'type',
+  'brands',
+  'company_briefing',
+  'supply_requested',
+  'email',
+  'phone',
+  'website',
+  'address',
+  'city',
+  'priority',
+  'contact_person',
+  'designation',
+  'imports_from_india',
+  'source_name',
+  'source_url',
+  'notes',
+  'verified',
+  'active',
+];
+
+const EXCEL_HEADER_ALIASES = {
+  companyid: 'company_id',
+  company_id: 'company_id',
+  companyname: 'company_name',
+  company_name: 'company_name',
+  country: 'country',
+  product: 'product',
+  productcategory: 'product',
+  product_category: 'product',
+  type: 'type',
+  brands: 'brands',
+  companybriefing: 'company_briefing',
+  company_briefing: 'company_briefing',
+  supplyrequested: 'supply_requested',
+  supply_requested: 'supply_requested',
+  email: 'email',
+  phone: 'phone',
+  website: 'website',
+  address: 'address',
+  city: 'city',
+  priority: 'priority',
+  contactperson: 'contact_person',
+  contact_person: 'contact_person',
+  designation: 'designation',
+  importsfromindia: 'imports_from_india',
+  imports_from_india: 'imports_from_india',
+  sourcename: 'source_name',
+  source_name: 'source_name',
+  sourceurl: 'source_url',
+  source_url: 'source_url',
+  notes: 'notes',
+  verified: 'verified',
+  active: 'active',
+};
+
+function normalizeExcelHeader(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return EXCEL_HEADER_ALIASES[normalized] || EXCEL_HEADER_ALIASES[normalized.replace(/_/g, '')] || normalized;
+}
+
+function parseExcelBoolean(value, fallback = true) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['true', 'yes', 'y', '1', 'active', 'verified'].includes(normalized)) return true;
+  if (['false', 'no', 'n', '0', 'inactive', 'unverified'].includes(normalized)) return false;
+  return fallback;
+}
+
+function normalizeExcelRow(rawRow, index) {
+  const mapped = {};
+
+  Object.entries(rawRow || {}).forEach(([header, value]) => {
+    const field = normalizeExcelHeader(header);
+    if (!EXCEL_COLUMNS.includes(field)) return;
+
+    const textValue = typeof value === 'string' ? value.trim() : value;
+    if (textValue === '' || textValue === null || textValue === undefined) return;
+    mapped[field] = textValue;
+  });
+
+  if ('priority' in mapped) {
+    const priority = Number(mapped.priority);
+    mapped.priority = Number.isFinite(priority) ? Math.max(1, Math.min(Math.round(priority), 5)) : 3;
+  }
+
+  if ('verified' in mapped) mapped.verified = parseExcelBoolean(mapped.verified, true);
+  if ('active' in mapped) mapped.active = parseExcelBoolean(mapped.active, true);
+
+  return {
+    ...mapped,
+    company_id: String(mapped.company_id || '').trim(),
+    _excel_row: index + 2,
+    _errors: [],
+  };
+}
+
+function chunkRows(rows, size) {
+  const chunks = [];
+  for (let index = 0; index < rows.length; index += size) {
+    chunks.push(rows.slice(index, index + size));
+  }
+  return chunks;
+}
 
 function parseCountries(value) {
   const seen = new Set();
@@ -322,6 +440,14 @@ function PortalApp() {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState('');
   const [editingCompanyId, setEditingCompanyId] = useState('');
+  const uploadInputRef = useRef(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [uploadFileName, setUploadFileName] = useState('');
+  const [uploadRows, setUploadRows] = useState([]);
+  const [uploadMessage, setUploadMessage] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0 });
+  const [uploadSummary, setUploadSummary] = useState(null);
 
   const isEditing = Boolean(editingCompanyId);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
@@ -525,6 +651,217 @@ function PortalApp() {
       setRequestMessage(err.message || 'Collection request could not be created.');
     } finally {
       setSavingRequest(false);
+    }
+  }
+
+  function resetUploadState() {
+    setUploadFileName('');
+    setUploadRows([]);
+    setUploadMessage('');
+    setUploadSummary(null);
+    setUploadProgress({ processed: 0, total: 0 });
+    if (uploadInputRef.current) uploadInputRef.current.value = '';
+  }
+
+  function closeUploadModal() {
+    if (uploading) return;
+    setIsUploadModalOpen(false);
+    resetUploadState();
+  }
+
+  function downloadExcelTemplate() {
+    const sampleRow = {
+      company_id: '',
+      company_name: 'Example Importer Ltd',
+      country: 'Malaysia',
+      product: 'Readymade Garments',
+      type: 'Importer',
+      brands: 'Example Brand',
+      company_briefing: 'Replace this sample row with company information.',
+      supply_requested: 'Private label garments',
+      email: 'buyer@example.com',
+      phone: '+60123456789',
+      website: 'https://example.com',
+      address: '',
+      city: 'Kuala Lumpur',
+      priority: 3,
+      contact_person: '',
+      designation: '',
+      imports_from_india: 'Unknown',
+      source_name: 'Company website',
+      source_url: 'https://example.com',
+      notes: '',
+      verified: true,
+      active: true,
+    };
+
+    const worksheet = XLSX.utils.json_to_sheet([sampleRow], { header: EXCEL_COLUMNS });
+    worksheet['!cols'] = EXCEL_COLUMNS.map((column) => ({
+      wch: ['company_briefing', 'supply_requested', 'address', 'notes'].includes(column) ? 34 : 20,
+    }));
+
+    const instructions = XLSX.utils.aoa_to_sheet([
+      ['RBR Company Upload Instructions'],
+      ['Rule', 'Explanation'],
+      ['New company', 'Leave company_id blank. The backend generates the next permanent sequential ID.'],
+      ['Update company', 'Enter an existing company_id. Blank optional cells are preserved and do not erase existing data.'],
+      ['Mandatory for new records', 'company_name, country, product'],
+      ['Deletion', 'Removing an Excel row never deletes a DynamoDB record.'],
+      ['Recommended batch size', `${EXCEL_BATCH_SIZE} records are sent per API request automatically.`],
+    ]);
+    instructions['!cols'] = [{ wch: 28 }, { wch: 90 }];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Companies Upload');
+    XLSX.utils.book_append_sheet(workbook, instructions, 'Instructions');
+    XLSX.writeFile(workbook, 'RBR_Company_Upload_Template.xlsx');
+  }
+
+  async function handleExcelFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadMessage('Reading Excel file and validating company IDs...');
+    setUploadSummary(null);
+    setUploadRows([]);
+    setUploadFileName(file.name);
+    setIsUploadModalOpen(true);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error('The workbook does not contain a worksheet.');
+
+      const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
+        defval: '',
+        raw: false,
+      });
+
+      if (!rawRows.length) {
+        throw new Error('No company rows were found in the first worksheet.');
+      }
+
+      const allCompaniesResponse = await apiFetch(COMPANY_API_URL);
+      const knownCompanyIds = new Set(
+        (allCompaniesResponse.items || [])
+          .map((item) => String(item.company_id || '').trim())
+          .filter(Boolean)
+      );
+
+      const seenIds = new Set();
+      const validatedRows = rawRows.map((rawRow, index) => {
+        const row = normalizeExcelRow(rawRow, index);
+        const errors = [];
+        const companyId = row.company_id;
+
+        if (companyId) {
+          if (seenIds.has(companyId)) {
+            errors.push(`Duplicate company_id ${companyId} in this workbook.`);
+          } else {
+            seenIds.add(companyId);
+          }
+
+          if (!knownCompanyIds.has(companyId)) {
+            errors.push(`company_id ${companyId} does not exist and cannot be created manually.`);
+          }
+
+          const updateFields = Object.keys(row).filter(
+            (key) => !['_excel_row', '_errors', 'company_id'].includes(key)
+          );
+          if (!updateFields.length) {
+            errors.push('Add at least one field to update.');
+          }
+        } else {
+          if (!String(row.company_name || '').trim()) errors.push('company_name is mandatory for a new record.');
+          if (!String(row.country || '').trim()) errors.push('country is mandatory for a new record.');
+          if (!String(row.product || '').trim()) errors.push('product is mandatory for a new record.');
+        }
+
+        return { ...row, _errors: errors };
+      });
+
+      const validCount = validatedRows.filter((row) => !row._errors.length).length;
+      const invalidCount = validatedRows.length - validCount;
+
+      setUploadRows(validatedRows);
+      setUploadMessage(
+        `Loaded ${validatedRows.length} row${validatedRows.length === 1 ? '' : 's'}: ` +
+        `${validCount} ready and ${invalidCount} requiring correction.`
+      );
+    } catch (error) {
+      setUploadRows([]);
+      setUploadMessage(error.message || 'The Excel file could not be read.');
+    } finally {
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  }
+
+  async function importExcelRows() {
+    const validRows = uploadRows.filter((row) => !row._errors.length);
+    if (!validRows.length) {
+      setUploadMessage('There are no valid rows to import.');
+      return;
+    }
+
+    setUploading(true);
+    setUploadSummary(null);
+    setUploadProgress({ processed: 0, total: validRows.length });
+
+    const aggregate = {
+      total: validRows.length,
+      created: 0,
+      updated: 0,
+      failed: 0,
+      results: [],
+      errors: [],
+    };
+
+    try {
+      const batches = chunkRows(validRows, EXCEL_BATCH_SIZE);
+      let processed = 0;
+
+      for (const batch of batches) {
+        const rowsForApi = batch.map(({ _errors, ...row }) => row);
+
+        try {
+          const response = await apiFetch(COMPANY_API_URL, {
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'bulk_import',
+              employee_name: employeeName.trim(),
+              employee_email: employeeEmail,
+              rows: rowsForApi,
+            }),
+          });
+
+          aggregate.created += Number(response.created || 0);
+          aggregate.updated += Number(response.updated || 0);
+          aggregate.failed += Number(response.failed || 0);
+          aggregate.results.push(...(response.results || []));
+          aggregate.errors.push(...(response.errors || []));
+        } catch (error) {
+          aggregate.failed += batch.length;
+          batch.forEach((row) => {
+            aggregate.errors.push({
+              excel_row: row._excel_row,
+              message: error.message || 'The batch request failed.',
+            });
+          });
+        }
+
+        processed += batch.length;
+        setUploadProgress({ processed, total: validRows.length });
+      }
+
+      setUploadSummary(aggregate);
+      setUploadMessage(
+        `Import finished: ${aggregate.created} created, ${aggregate.updated} updated, ` +
+        `${aggregate.failed} failed.`
+      );
+      await loadCompanies({}, 'initial');
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -994,11 +1331,21 @@ function PortalApp() {
           <div className="section-title-row">
             <h3>{tableTitle}</h3>
             <div className="table-actions">
+              <input
+                ref={uploadInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                className="excel-file-input"
+                onChange={handleExcelFile}
+              />
               <button type="button" className="add-record-button" onClick={newCompany}>
                 <Plus size={17} /> Add Record
               </button>
-              <button type="button" className="export-button">
-                <Download size={17} /> Export <ChevronDown size={15} />
+              <button type="button" className="upload-button" onClick={() => uploadInputRef.current?.click()}>
+                <Upload size={17} /> Upload Excel
+              </button>
+              <button type="button" className="export-button" onClick={downloadExcelTemplate}>
+                <Download size={17} /> Excel Template
               </button>
             </div>
           </div>
@@ -1184,6 +1531,125 @@ function PortalApp() {
                   </button>
                 </div>
               </form>
+            </section>
+          </div>
+        )}
+
+        {isUploadModalOpen && (
+          <div className="modal-overlay" role="presentation">
+            <section className="record-modal upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-modal-title">
+              <div className="modal-head">
+                <div>
+                  <h3 id="upload-modal-title"><Upload size={20} /> Upload Company Excel</h3>
+                  <p>
+                    Blank company IDs create new sequential records. Existing company IDs update those records.
+                    Invalid rows are skipped.
+                  </p>
+                </div>
+                <button type="button" className="modal-close" onClick={closeUploadModal} aria-label="Close upload popup">
+                  <XCircle size={22} />
+                </button>
+              </div>
+
+              <div className="upload-summary-strip">
+                <div><span>File</span><b>{uploadFileName || '-'}</b></div>
+                <div><span>Total rows</span><b>{uploadRows.length}</b></div>
+                <div><span>Ready</span><b>{uploadRows.filter((row) => !row._errors.length).length}</b></div>
+                <div><span>Invalid</span><b>{uploadRows.filter((row) => row._errors.length).length}</b></div>
+              </div>
+
+              {uploadMessage && <p className="status-message">{uploadMessage}</p>}
+
+              {uploading && (
+                <div className="upload-progress">
+                  <div>
+                    <span
+                      style={{
+                        width: `${uploadProgress.total ? Math.round((uploadProgress.processed / uploadProgress.total) * 100) : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <small>{uploadProgress.processed} of {uploadProgress.total} valid rows processed</small>
+                </div>
+              )}
+
+              {uploadSummary && (
+                <div className="upload-result-grid">
+                  <div><span>Created</span><b>{uploadSummary.created}</b></div>
+                  <div><span>Updated</span><b>{uploadSummary.updated}</b></div>
+                  <div><span>Failed</span><b>{uploadSummary.failed}</b></div>
+                </div>
+              )}
+
+              <div className="upload-preview-wrap">
+                <table className="data-table upload-preview-table">
+                  <thead>
+                    <tr>
+                      <th>Excel Row</th>
+                      <th>Action</th>
+                      <th>company_id</th>
+                      <th>company_name</th>
+                      <th>country</th>
+                      <th>product</th>
+                      <th>Validation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {uploadRows.slice(0, 200).map((row) => (
+                      <tr key={`${row._excel_row}-${row.company_id || row.company_name || 'row'}`}>
+                        <td>{row._excel_row}</td>
+                        <td>
+                          <span className={`status-pill ${row.company_id ? 'status-progress' : 'status-completed'}`}>
+                            {row.company_id ? 'Update' : 'Create'}
+                          </span>
+                        </td>
+                        <td>{row.company_id || 'Auto generated'}</td>
+                        <td>{row.company_name || '-'}</td>
+                        <td>{row.country || '-'}</td>
+                        <td>{row.product || '-'}</td>
+                        <td>
+                          {row._errors.length
+                            ? <span className="upload-error-text">{row._errors.join(' ')}</span>
+                            : <span className="upload-valid-text">Ready</span>}
+                        </td>
+                      </tr>
+                    ))}
+                    {!uploadRows.length && (
+                      <tr><td colSpan="7" className="empty-table">Select an Excel file to preview its rows.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {uploadRows.length > 200 && (
+                <small className="upload-preview-note">Preview shows the first 200 rows. All valid rows will still be imported.</small>
+              )}
+
+              {uploadSummary?.errors?.length > 0 && (
+                <div className="upload-errors-panel">
+                  <h4>Import errors</h4>
+                  {uploadSummary.errors.slice(0, 50).map((error, index) => (
+                    <p key={`${error.excel_row || 'row'}-${index}`}>
+                      Row {error.excel_row || '-'}: {error.message}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              <div className="modal-actions upload-modal-actions">
+                <button type="button" className="secondary" onClick={closeUploadModal} disabled={uploading}>Close</button>
+                <button type="button" className="secondary" onClick={downloadExcelTemplate} disabled={uploading}>
+                  <Download size={17} /> Download Template
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={importExcelRows}
+                  disabled={uploading || !uploadRows.some((row) => !row._errors.length)}
+                >
+                  <Upload size={17} /> {uploading ? 'Importing...' : 'Import Valid Rows'}
+                </button>
+              </div>
             </section>
           </div>
         )}
