@@ -91,6 +91,33 @@ const emptyRequestForm = {
 
 
 const EXCEL_BATCH_SIZE = 25;
+const UPLOAD_STEP_LABELS = ['Reading Excel', 'Verifying data', 'Uploading records', 'Synchronising database', 'Completed'];
+
+function uploadPhaseStepIndex(phase) {
+  const indexes = {
+    reading: 0,
+    verifying: 1,
+    ready: 1,
+    uploading: 2,
+    syncing: 3,
+    success: 4,
+  };
+  return indexes[phase] ?? -1;
+}
+
+function uploadPhaseTitle(phase) {
+  const titles = {
+    idle: 'Select an Excel file',
+    reading: 'Reading Excel file...',
+    verifying: 'Verifying data...',
+    ready: 'Data verified and ready',
+    uploading: 'Uploading records...',
+    syncing: 'Synchronising with the database...',
+    success: 'Data upload success!',
+    failed: 'Data upload failed',
+  };
+  return titles[phase] || 'Excel upload';
+}
 const EXCEL_COLUMNS = [
   'company_id',
   'company_name',
@@ -448,6 +475,7 @@ function PortalApp() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0 });
   const [uploadSummary, setUploadSummary] = useState(null);
+  const [uploadPhase, setUploadPhase] = useState('idle');
 
   const isEditing = Boolean(editingCompanyId);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
@@ -660,6 +688,7 @@ function PortalApp() {
     setUploadMessage('');
     setUploadSummary(null);
     setUploadProgress({ processed: 0, total: 0 });
+    setUploadPhase('idle');
     if (uploadInputRef.current) uploadInputRef.current.value = '';
   }
 
@@ -721,7 +750,8 @@ function PortalApp() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setUploadMessage('Reading Excel file and validating company IDs...');
+    setUploadPhase('reading');
+    setUploadMessage('Opening the workbook and reading the first worksheet...');
     setUploadSummary(null);
     setUploadRows([]);
     setUploadFileName(file.name);
@@ -741,6 +771,9 @@ function PortalApp() {
       if (!rawRows.length) {
         throw new Error('No company rows were found in the first worksheet.');
       }
+
+      setUploadPhase('verifying');
+      setUploadMessage(`Verifying ${rawRows.length} row${rawRows.length === 1 ? '' : 's'} and checking existing company IDs...`);
 
       const allCompaniesResponse = await apiFetch(COMPANY_API_URL);
       const knownCompanyIds = new Set(
@@ -785,12 +818,14 @@ function PortalApp() {
       const invalidCount = validatedRows.length - validCount;
 
       setUploadRows(validatedRows);
+      setUploadPhase('ready');
       setUploadMessage(
-        `Loaded ${validatedRows.length} row${validatedRows.length === 1 ? '' : 's'}: ` +
-        `${validCount} ready and ${invalidCount} requiring correction.`
+        `Verification complete: ${validCount} row${validCount === 1 ? '' : 's'} ready and ` +
+        `${invalidCount} row${invalidCount === 1 ? '' : 's'} requiring correction.`
       );
     } catch (error) {
       setUploadRows([]);
+      setUploadPhase('failed');
       setUploadMessage(error.message || 'The Excel file could not be read.');
     } finally {
       if (uploadInputRef.current) uploadInputRef.current.value = '';
@@ -800,11 +835,14 @@ function PortalApp() {
   async function importExcelRows() {
     const validRows = uploadRows.filter((row) => !row._errors.length);
     if (!validRows.length) {
-      setUploadMessage('There are no valid rows to import.');
+      setUploadPhase('failed');
+      setUploadMessage('There are no valid rows to import. Correct the validation errors and upload the file again.');
       return;
     }
 
     setUploading(true);
+    setUploadPhase('uploading');
+    setUploadMessage(`Uploading 0 of ${validRows.length} valid rows...`);
     setUploadSummary(null);
     setUploadProgress({ processed: 0, total: validRows.length });
 
@@ -821,8 +859,12 @@ function PortalApp() {
       const batches = chunkRows(validRows, EXCEL_BATCH_SIZE);
       let processed = 0;
 
-      for (const batch of batches) {
+      for (const [batchIndex, batch] of batches.entries()) {
         const rowsForApi = batch.map(({ _errors, ...row }) => row);
+        setUploadMessage(
+          `Uploading batch ${batchIndex + 1} of ${batches.length} ` +
+          `(${processed} of ${validRows.length} rows processed)...`
+        );
 
         try {
           const response = await apiFetch(COMPANY_API_URL, {
@@ -852,14 +894,39 @@ function PortalApp() {
 
         processed += batch.length;
         setUploadProgress({ processed, total: validRows.length });
+        setUploadMessage(`Uploaded ${processed} of ${validRows.length} valid rows...`);
       }
 
       setUploadSummary(aggregate);
-      setUploadMessage(
-        `Import finished: ${aggregate.created} created, ${aggregate.updated} updated, ` +
-        `${aggregate.failed} failed.`
-      );
+      setUploadPhase('syncing');
+      setUploadMessage('Synchronising uploaded records with the company database...');
       await loadCompanies({}, 'initial');
+
+      if (aggregate.failed === 0) {
+        const successMessage =
+          `Data upload success! ${aggregate.created} created and ${aggregate.updated} updated.`;
+        setUploadPhase('success');
+        setUploadMessage(successMessage);
+        setStatus(successMessage);
+
+        // Keep the success state visible briefly, then close and clear the popup.
+        await new Promise((resolve) => window.setTimeout(resolve, 1800));
+        setIsUploadModalOpen(false);
+        resetUploadState();
+        return;
+      }
+
+      const partialMessage =
+        `Upload completed with issues: ${aggregate.created} created, ${aggregate.updated} updated, ` +
+        `${aggregate.failed} failed. Review the reasons below.`;
+      setUploadPhase('failed');
+      setUploadMessage(partialMessage);
+      setStatus(partialMessage);
+    } catch (error) {
+      const failureMessage = error.message || 'The Excel upload failed unexpectedly.';
+      setUploadPhase('failed');
+      setUploadMessage(`Data upload failed: ${failureMessage}`);
+      setStatus(`Excel upload failed: ${failureMessage}`);
     } finally {
       setUploading(false);
     }
@@ -1558,7 +1625,41 @@ function PortalApp() {
                 <div><span>Invalid</span><b>{uploadRows.filter((row) => row._errors.length).length}</b></div>
               </div>
 
-              {uploadMessage && <p className="status-message">{uploadMessage}</p>}
+              <div className={`upload-stage-card upload-stage-${uploadPhase}`}>
+                <div className="upload-stage-heading">
+                  <span className={`upload-stage-symbol ${['reading', 'verifying', 'uploading', 'syncing'].includes(uploadPhase) ? 'is-spinning' : ''}`}>
+                    {uploadPhase === 'success'
+                      ? <CheckCircle2 size={24} />
+                      : uploadPhase === 'failed'
+                        ? <XCircle size={24} />
+                        : <RefreshCw size={24} />}
+                  </span>
+                  <div>
+                    <b>{uploadPhaseTitle(uploadPhase)}</b>
+                    <p>{uploadMessage || 'Choose an Excel file to begin.'}</p>
+                  </div>
+                </div>
+
+                <div className="upload-step-track">
+                  {UPLOAD_STEP_LABELS.map((label, index) => {
+                    const activeIndex = uploadPhaseStepIndex(uploadPhase);
+                    const stepClass = uploadPhase === 'failed'
+                      ? (index < activeIndex ? 'done' : index === activeIndex ? 'failed' : 'pending')
+                      : index < activeIndex
+                        ? 'done'
+                        : index === activeIndex
+                          ? (uploadPhase === 'success' ? 'done' : 'active')
+                          : 'pending';
+
+                    return (
+                      <div className={`upload-step ${stepClass}`} key={label}>
+                        <span>{index + 1}</span>
+                        <small>{label}</small>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               {uploading && (
                 <div className="upload-progress">
