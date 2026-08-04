@@ -1057,3 +1057,166 @@ label {
   }
 }
 
+
+/* Upload lifecycle status */
+.upload-stage-card {
+  border: 1px solid #dbe7f8;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: #f8fbff;
+}
+
+.upload-stage-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.upload-stage-heading > div {
+  min-width: 0;
+}
+
+.upload-stage-heading b {
+  display: block;
+  color: #071029;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.upload-stage-heading p {
+  margin: 0;
+  color: #526078;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.upload-stage-symbol {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #0b5cf6;
+  background: #e7f0ff;
+}
+
+.upload-stage-success {
+  border-color: #a7e3bd;
+  background: #f0fff5;
+}
+
+.upload-stage-success .upload-stage-symbol {
+  color: #15803d;
+  background: #dcfce7;
+}
+
+.upload-stage-failed {
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.upload-stage-failed .upload-stage-symbol {
+  color: #dc2626;
+  background: #fee2e2;
+}
+
+.upload-stage-symbol.is-spinning svg {
+  animation: upload-spin 0.9s linear infinite;
+}
+
+@keyframes upload-spin {
+  to { transform: rotate(360deg); }
+}
+
+.upload-step-track {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.upload-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #8a94a6;
+}
+
+.upload-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  height: 2px;
+  left: 29px;
+  right: -5px;
+  top: 13px;
+  background: #dbe3ee;
+  z-index: 0;
+}
+
+.upload-step > span {
+  width: 27px;
+  height: 27px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 2px solid #cfd7e4;
+  background: white;
+  font-size: 11px;
+  font-weight: 900;
+  position: relative;
+  z-index: 1;
+}
+
+.upload-step small {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  position: relative;
+  z-index: 1;
+}
+
+.upload-step.done,
+.upload-step.active {
+  color: #0b5cf6;
+}
+
+.upload-step.done > span,
+.upload-step.active > span {
+  border-color: #0b5cf6;
+  background: #0b5cf6;
+  color: white;
+}
+
+.upload-step.done:not(:last-child)::after {
+  background: #0b5cf6;
+}
+
+.upload-step.failed {
+  color: #dc2626;
+}
+
+.upload-step.failed > span {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: white;
+}
+
+@media (max-width: 760px) {
+  .upload-step-track {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .upload-step:not(:last-child)::after {
+    width: 2px;
+    height: 14px;
+    left: 13px;
+    right: auto;
+    top: 27px;
+  }
+}
