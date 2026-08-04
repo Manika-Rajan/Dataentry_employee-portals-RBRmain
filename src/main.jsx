@@ -321,8 +321,9 @@ function PortalApp() {
   const [hasLoadedRequests, setHasLoadedRequests] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState('');
+  const [editingCompanyId, setEditingCompanyId] = useState('');
 
-  const isEditing = Boolean(form.company_id);
+  const isEditing = Boolean(editingCompanyId);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
 
   useEffect(() => {
@@ -367,12 +368,13 @@ function PortalApp() {
         employee_email: employeeEmail,
       };
 
-      const url = isEditing
-        ? `${COMPANY_API_URL}/${encodeURIComponent(form.company_id)}`
-        : COMPANY_API_URL;
-
+      // The API Gateway exposes GET/POST/PUT on the base resource only.
+      // company_id stays in the JSON body; it must not be appended to the URL.
       const method = isEditing ? 'PUT' : 'POST';
-      const data = await apiFetch(url, { method, body: JSON.stringify(payload) });
+      const data = await apiFetch(COMPANY_API_URL, {
+        method,
+        body: JSON.stringify(payload),
+      });
 
       setStatus(isEditing ? 'Company updated successfully.' : 'Company saved successfully.');
 
@@ -394,6 +396,7 @@ function PortalApp() {
       }
 
       setForm(emptyForm);
+      setEditingCompanyId('');
       setEntryRequest(null);
       setIsRecordModalOpen(false);
       setShowAdvancedFields(false);
@@ -538,6 +541,7 @@ function PortalApp() {
 
   function editCompany(item) {
     const normalized = normalizeCompanyRecord(item);
+    setEditingCompanyId(normalized.company_id || '');
     setEntryRequest(null);
     setForm({
       ...emptyForm,
@@ -553,6 +557,7 @@ function PortalApp() {
   }
 
   function newCompany() {
+    setEditingCompanyId('');
     setEntryRequest(null);
     setForm(emptyForm);
     setShowAdvancedFields(false);
@@ -564,11 +569,13 @@ function PortalApp() {
     if (saving) return;
     setIsRecordModalOpen(false);
     setShowAdvancedFields(false);
+    setEditingCompanyId('');
     setEntryRequest(null);
     setForm(emptyForm);
   }
 
   function addCompanyFromRequest(request) {
+    setEditingCompanyId('');
     setEntryRequest(request);
     setForm({
       ...emptyForm,
