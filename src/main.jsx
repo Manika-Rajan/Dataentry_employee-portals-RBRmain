@@ -28,6 +28,7 @@ import {
   PauseCircle,
   TrendingUp,
   RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import './styles.css';
@@ -119,7 +120,6 @@ function uploadPhaseTitle(phase) {
   return titles[phase] || 'Excel upload';
 }
 const EXCEL_COLUMNS = [
-  'company_id',
   'company_name',
   'country',
   'product',
@@ -199,12 +199,20 @@ function parseExcelBoolean(value, fallback = true) {
 
 function normalizeExcelRow(rawRow, index) {
   const mapped = {};
+  let suppliedCompanyId = '';
 
   Object.entries(rawRow || {}).forEach(([header, value]) => {
     const field = normalizeExcelHeader(header);
-    if (!EXCEL_COLUMNS.includes(field)) return;
-
     const textValue = typeof value === 'string' ? value.trim() : value;
+
+    // company_id is never accepted from an associate upload. New IDs are
+    // generated only by the backend sequence.
+    if (field === 'company_id') {
+      suppliedCompanyId = String(textValue || '').trim();
+      return;
+    }
+
+    if (!EXCEL_COLUMNS.includes(field)) return;
     if (textValue === '' || textValue === null || textValue === undefined) return;
     mapped[field] = textValue;
   });
@@ -219,7 +227,7 @@ function normalizeExcelRow(rawRow, index) {
 
   return {
     ...mapped,
-    company_id: String(mapped.company_id || '').trim(),
+    _supplied_company_id: suppliedCompanyId,
     _excel_row: index + 2,
     _errors: [],
   };
@@ -435,10 +443,28 @@ function statusClass(percent) {
   return 'status-progress';
 }
 
+function getCognitoGroups(profile = {}) {
+  const rawGroups = profile?.['cognito:groups'] ?? profile?.cognito_groups ?? [];
+
+  if (Array.isArray(rawGroups)) {
+    return rawGroups.map((group) => String(group).trim()).filter(Boolean);
+  }
+
+  return String(rawGroups || '')
+    .split(',')
+    .map((group) => group.trim())
+    .filter(Boolean);
+}
+
 function PortalApp() {
   const auth = useAuth();
 
   const employeeEmail = auth.user?.profile?.email || '';
+  const cognitoGroups = getCognitoGroups(auth.user?.profile || {});
+  const isAdjudicator = cognitoGroups.some(
+    (group) => group.toLowerCase() === 'adjudicator'
+  );
+
   const employeeDisplayName =
     auth.user?.profile?.name ||
     employeeEmail ||
@@ -467,6 +493,7 @@ function PortalApp() {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [expandedRequestId, setExpandedRequestId] = useState('');
   const [editingCompanyId, setEditingCompanyId] = useState('');
+  const [deactivatingCompanyId, setDeactivatingCompanyId] = useState('');
   const uploadInputRef = useRef(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadFileName, setUploadFileName] = useState('');
@@ -510,6 +537,12 @@ function PortalApp() {
     e.preventDefault();
     const linkedRequest = entryRequest;
     setStatus('');
+
+    if (isEditing && !isAdjudicator) {
+      setStatus('Only an Adjudicator can update an existing company record.');
+      return;
+    }
+
     const error = validate();
     if (error) return setStatus(error);
 
@@ -520,10 +553,10 @@ function PortalApp() {
       const payload = {
         ...buildPayload(form, employeeName.trim()),
         employee_email: employeeEmail,
+        updated_by: employeeEmail || employeeName.trim(),
       };
 
-      // The API Gateway exposes GET/POST/PUT on the base resource only.
-      // company_id stays in the JSON body; it must not be appended to the URL.
+      // Associates create records. Only Cognito Adjudicators can reach edit mode.
       const method = isEditing ? 'PUT' : 'POST';
       const data = await apiFetch(COMPANY_API_URL, {
         method,
@@ -574,7 +607,9 @@ function PortalApp() {
 
       const queryString = params.toString();
       const data = await apiFetch(`${COMPANY_API_URL}${queryString ? `?${queryString}` : ''}`);
-      const items = (data.items || []).map(normalizeCompanyRecord);
+      const items = (data.items || [])
+        .map(normalizeCompanyRecord)
+        .filter((item) => item.active !== false);
 
       setResults(items);
       setHasLoadedRecords(true);
@@ -700,7 +735,6 @@ function PortalApp() {
 
   function downloadExcelTemplate() {
     const sampleRow = {
-      company_id: '',
       company_name: 'Example Importer Ltd',
       country: 'Malaysia',
       product: 'Readymade Garments',
@@ -732,10 +766,10 @@ function PortalApp() {
     const instructions = XLSX.utils.aoa_to_sheet([
       ['RBR Company Upload Instructions'],
       ['Rule', 'Explanation'],
-      ['New company', 'Leave company_id blank. The backend generates the next permanent sequential ID.'],
-      ['Update company', 'Enter an existing company_id. Blank optional cells are preserved and do not erase existing data.'],
-      ['Mandatory for new records', 'company_name, country, product'],
-      ['Deletion', 'Removing an Excel row never deletes a DynamoDB record.'],
+      ['New companies only', 'Every valid row creates a new company. The backend generates the permanent sequential company ID.'],
+      ['No updates in Excel', 'Do not include company_id. Existing records can be changed only by an Adjudicator.'],
+      ['Mandatory fields', 'company_name, country, product'],
+      ['Deletion', 'Removing an Excel row never deactivates a DynamoDB record.'],
       ['Recommended batch size', `${EXCEL_BATCH_SIZE} records are sent per API request automatically.`],
     ]);
     instructions['!cols'] = [{ wch: 28 }, { wch: 90 }];
@@ -773,43 +807,21 @@ function PortalApp() {
       }
 
       setUploadPhase('verifying');
-      setUploadMessage(`Verifying ${rawRows.length} row${rawRows.length === 1 ? '' : 's'} and checking existing company IDs...`);
+      setUploadMessage(`Verifying ${rawRows.length} new company row${rawRows.length === 1 ? '' : 's'}...`);
 
-      const allCompaniesResponse = await apiFetch(COMPANY_API_URL);
-      const knownCompanyIds = new Set(
-        (allCompaniesResponse.items || [])
-          .map((item) => String(item.company_id || '').trim())
-          .filter(Boolean)
-      );
-
-      const seenIds = new Set();
       const validatedRows = rawRows.map((rawRow, index) => {
         const row = normalizeExcelRow(rawRow, index);
         const errors = [];
-        const companyId = row.company_id;
 
-        if (companyId) {
-          if (seenIds.has(companyId)) {
-            errors.push(`Duplicate company_id ${companyId} in this workbook.`);
-          } else {
-            seenIds.add(companyId);
-          }
-
-          if (!knownCompanyIds.has(companyId)) {
-            errors.push(`company_id ${companyId} does not exist and cannot be created manually.`);
-          }
-
-          const updateFields = Object.keys(row).filter(
-            (key) => !['_excel_row', '_errors', 'company_id'].includes(key)
+        if (row._supplied_company_id) {
+          errors.push(
+            'company_id is not allowed in associate uploads. Existing records can be changed only by an Adjudicator.'
           );
-          if (!updateFields.length) {
-            errors.push('Add at least one field to update.');
-          }
-        } else {
-          if (!String(row.company_name || '').trim()) errors.push('company_name is mandatory for a new record.');
-          if (!String(row.country || '').trim()) errors.push('country is mandatory for a new record.');
-          if (!String(row.product || '').trim()) errors.push('product is mandatory for a new record.');
         }
+
+        if (!String(row.company_name || '').trim()) errors.push('company_name is mandatory.');
+        if (!String(row.country || '').trim()) errors.push('country is mandatory.');
+        if (!String(row.product || '').trim()) errors.push('product is mandatory.');
 
         return { ...row, _errors: errors };
       });
@@ -849,7 +861,6 @@ function PortalApp() {
     const aggregate = {
       total: validRows.length,
       created: 0,
-      updated: 0,
       failed: 0,
       results: [],
       errors: [],
@@ -860,7 +871,7 @@ function PortalApp() {
       let processed = 0;
 
       for (const [batchIndex, batch] of batches.entries()) {
-        const rowsForApi = batch.map(({ _errors, ...row }) => row);
+        const rowsForApi = batch.map(({ _errors, _supplied_company_id, ...row }) => row);
         setUploadMessage(
           `Uploading batch ${batchIndex + 1} of ${batches.length} ` +
           `(${processed} of ${validRows.length} rows processed)...`
@@ -878,7 +889,6 @@ function PortalApp() {
           });
 
           aggregate.created += Number(response.created || 0);
-          aggregate.updated += Number(response.updated || 0);
           aggregate.failed += Number(response.failed || 0);
           aggregate.results.push(...(response.results || []));
           aggregate.errors.push(...(response.errors || []));
@@ -904,7 +914,7 @@ function PortalApp() {
 
       if (aggregate.failed === 0) {
         const successMessage =
-          `Data upload success! ${aggregate.created} created and ${aggregate.updated} updated.`;
+          `Data upload success! ${aggregate.created} new compan${aggregate.created === 1 ? 'y was' : 'ies were'} created.`;
         setUploadPhase('success');
         setUploadMessage(successMessage);
         setStatus(successMessage);
@@ -917,7 +927,7 @@ function PortalApp() {
       }
 
       const partialMessage =
-        `Upload completed with issues: ${aggregate.created} created, ${aggregate.updated} updated, ` +
+        `Upload completed with issues: ${aggregate.created} created and ` +
         `${aggregate.failed} failed. Review the reasons below.`;
       setUploadPhase('failed');
       setUploadMessage(partialMessage);
@@ -944,6 +954,11 @@ function PortalApp() {
 
 
   function editCompany(item) {
+    if (!isAdjudicator) {
+      setStatus('Only an Adjudicator can update an existing company record.');
+      return;
+    }
+
     const normalized = normalizeCompanyRecord(item);
     setEditingCompanyId(normalized.company_id || '');
     setEntryRequest(null);
@@ -957,7 +972,58 @@ function PortalApp() {
 
     setShowAdvancedFields(false);
     setIsRecordModalOpen(true);
-    setStatus(`Editing: ${item.company_name}`);
+    setStatus(`Adjudicator editing: ${item.company_name}`);
+  }
+
+  async function deactivateCompany(item) {
+    if (!isAdjudicator) {
+      setStatus('Only an Adjudicator can deactivate a company record.');
+      return;
+    }
+
+    const companyId = String(item.company_id || '').trim();
+    if (!companyId) {
+      setStatus('This record does not have a company ID and cannot be deactivated.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Deactivate ${item.company_name || companyId}?\n\n` +
+      'The record will remain in DynamoDB with active set to false.'
+    );
+    if (!confirmed) return;
+
+    setDeactivatingCompanyId(companyId);
+    setStatus('');
+
+    try {
+      const payload = {
+        ...normalizeCompanyRecord(item),
+        active: false,
+        employee_email: employeeEmail,
+        updated_by: employeeEmail || employeeName.trim(),
+        deactivated_at: new Date().toISOString(),
+        deactivated_by: employeeEmail || employeeName.trim(),
+      };
+
+      await apiFetch(COMPANY_API_URL, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+
+      setResults((previous) => previous.filter(
+        (company) => String(company.company_id || '') !== companyId
+      ));
+      setExpandedCompanyId('');
+      setStatus(
+        `${item.company_name || companyId} was deactivated successfully. ` +
+        'The DynamoDB record remains stored with active set to false.'
+      );
+    } catch (error) {
+      setStatus(error.message || 'The company record could not be deactivated.');
+    } finally {
+      setDeactivatingCompanyId('');
+    }
   }
 
   function newCompany() {
@@ -1173,7 +1239,10 @@ function PortalApp() {
               <UserCircle size={38} />
               <div>
                 <b>{employeeName || 'Admin'}</b>
-                <small>{employeeEmail || 'Employee Portal'}</small>
+                <small>
+                  {employeeEmail || 'Employee Portal'}
+                  {isAdjudicator ? ' · Adjudicator' : ' · Data Entry'}
+                </small>
               </div>
               <ChevronDown size={18} />
             </div>
@@ -1501,9 +1570,37 @@ function PortalApp() {
                               <div><span>type</span><p>{item.type || '-'}</p></div>
                               <div><span>record_completeness</span><p><span className={`status-pill ${statusClass(percent)}`}>{statusLabel(percent)} · {percent}%</span></p></div>
                               <div className="details-actions">
-                                <button type="button" className="filter-button" onClick={() => editCompany(item)}>
-                                  <Pencil size={15} /> Edit This Record
-                                </button>
+                                {isAdjudicator ? (
+                                  <div style={{ display: 'flex', gap: 10, width: '100%', flexWrap: 'wrap' }}>
+                                    <button
+                                      type="button"
+                                      className="filter-button"
+                                      onClick={() => editCompany(item)}
+                                      style={{ flex: '1 1 170px' }}
+                                    >
+                                      <Pencil size={15} /> Edit Record
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="secondary"
+                                      onClick={() => deactivateCompany(item)}
+                                      disabled={deactivatingCompanyId === item.company_id}
+                                      style={{
+                                        flex: '1 1 170px',
+                                        color: '#b42318',
+                                        borderColor: '#f3b7b2',
+                                        background: '#fff5f4',
+                                      }}
+                                    >
+                                      <Trash2 size={15} />
+                                      {deactivatingCompanyId === item.company_id ? 'Deactivating...' : 'Deactivate'}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <p style={{ margin: 0, color: '#68748a', textAlign: 'center' }}>
+                                    View only. Changes require an Adjudicator.
+                                  </p>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -1609,8 +1706,8 @@ function PortalApp() {
                 <div>
                   <h3 id="upload-modal-title"><Upload size={20} /> Upload Company Excel</h3>
                   <p>
-                    Blank company IDs create new sequential records. Existing company IDs update those records.
-                    Invalid rows are skipped.
+                    Every valid row creates a new company with a backend-generated sequential ID.
+                    Existing records cannot be updated through Excel.
                   </p>
                 </div>
                 <button type="button" className="modal-close" onClick={closeUploadModal} aria-label="Close upload popup">
@@ -1677,7 +1774,6 @@ function PortalApp() {
               {uploadSummary && (
                 <div className="upload-result-grid">
                   <div><span>Created</span><b>{uploadSummary.created}</b></div>
-                  <div><span>Updated</span><b>{uploadSummary.updated}</b></div>
                   <div><span>Failed</span><b>{uploadSummary.failed}</b></div>
                 </div>
               )}
@@ -1688,7 +1784,6 @@ function PortalApp() {
                     <tr>
                       <th>Excel Row</th>
                       <th>Action</th>
-                      <th>company_id</th>
                       <th>company_name</th>
                       <th>country</th>
                       <th>product</th>
@@ -1697,14 +1792,13 @@ function PortalApp() {
                   </thead>
                   <tbody>
                     {uploadRows.slice(0, 200).map((row) => (
-                      <tr key={`${row._excel_row}-${row.company_id || row.company_name || 'row'}`}>
+                      <tr key={`${row._excel_row}-${row.company_name || 'row'}`}>
                         <td>{row._excel_row}</td>
                         <td>
-                          <span className={`status-pill ${row.company_id ? 'status-progress' : 'status-completed'}`}>
-                            {row.company_id ? 'Update' : 'Create'}
+                          <span className="status-pill status-completed">
+                            Create
                           </span>
                         </td>
-                        <td>{row.company_id || 'Auto generated'}</td>
                         <td>{row.company_name || '-'}</td>
                         <td>{row.country || '-'}</td>
                         <td>{row.product || '-'}</td>
@@ -1716,7 +1810,7 @@ function PortalApp() {
                       </tr>
                     ))}
                     {!uploadRows.length && (
-                      <tr><td colSpan="7" className="empty-table">Select an Excel file to preview its rows.</td></tr>
+                      <tr><td colSpan="6" className="empty-table">Select an Excel file to preview its rows.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1760,8 +1854,14 @@ function PortalApp() {
             <section className="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-modal-title">
               <div className="modal-head">
                 <div>
-                  <h3 id="record-modal-title">{isEditing ? 'Edit Company Record' : 'Add Company Record'}</h3>
-                  <p>Enter only the key DynamoDB fields first. Extra internal fields are hidden under additional details.</p>
+                  <h3 id="record-modal-title">
+                    {isEditing ? 'Adjudicator — Edit Company Record' : 'Add Company Record'}
+                  </h3>
+                  <p>
+                    {isEditing
+                      ? 'Only Adjudicators can change an existing company. The company ID remains permanent.'
+                      : 'Enter the key company details. The company ID is generated automatically when saved.'}
+                  </p>
                 </div>
                 <button type="button" className="modal-close" onClick={closeRecordModal} aria-label="Close popup">
                   <XCircle size={22} />
@@ -1836,7 +1936,16 @@ function PortalApp() {
                     <label className="span2">Source URL<input value={form.source_url} onChange={(e) => setField('source_url', e.target.value)} placeholder="https://..." /></label>
                     <label className="span2">Internal Notes<textarea value={form.notes} onChange={(e) => setField('notes', e.target.value)} rows="2" /></label>
                     <label className="toggle"><input type="checkbox" checked={form.verified} onChange={(e) => setField('verified', e.target.checked)} /> Verified</label>
-                    <label className="toggle"><input type="checkbox" checked={form.active} onChange={(e) => setField('active', e.target.checked)} /> Active</label>
+                    {isAdjudicator && isEditing && (
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={form.active}
+                          onChange={(e) => setField('active', e.target.checked)}
+                        />
+                        Active
+                      </label>
+                    )}
                   </div>
                 )}
 
@@ -1853,7 +1962,7 @@ function PortalApp() {
                 <div className="modal-actions span2">
                   <button type="button" className="secondary" onClick={closeRecordModal} disabled={saving}>Cancel</button>
                   <button className="primary" disabled={saving}>
-                    <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Record' : 'Save Record'}
+                    <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Save Adjudicator Changes' : 'Save New Record'}
                   </button>
                 </div>
               </form>
