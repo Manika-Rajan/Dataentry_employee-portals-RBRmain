@@ -1222,7 +1222,7 @@ function PortalApp() {
                     </div>
                   </div>
                 )}
-                <label>company_id<input value={form.company_id} onChange={(e) => setField('company_id', e.target.value)} placeholder="MY000002 or leave blank if Lambda generates" disabled={isEditing} /></label>
+                <label>company_id<input value={form.company_id} placeholder="Generated automatically when saved" readOnly /></label>
                 <label>type
                   <select value={form.type} onChange={(e) => setField('type', e.target.value)}>
                     {companyTypes.map((t) => <option key={t}>{t}</option>)}
