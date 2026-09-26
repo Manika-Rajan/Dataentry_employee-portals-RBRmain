@@ -56,8 +56,8 @@ const companyTypes = ['Importer', 'Retail Chain', 'Retailer', 'Distributor', 'Bu
 const emptyForm = {
   company_id: '',
   company_name: '',
-  country: '',
-  product: '',
+  country: 'Unassigned',
+  product: 'Unassigned',
   company_briefing: '',
   brands: '',
   supply_requested: '',
@@ -526,10 +526,8 @@ function PortalApp() {
   }
 
   function validate() {
-    if (!employeeName.trim()) return 'Please enter employee name before saving.';
-    if (!form.country.trim()) return 'Country is mandatory.';
-    if (!form.product.trim()) return 'Product is mandatory.';
     if (!form.company_name.trim()) return 'Company name is mandatory.';
+    if (!form.phone.trim()) return 'Company phone number is mandatory.';
     return '';
   }
 
@@ -538,22 +536,18 @@ function PortalApp() {
     const linkedRequest = entryRequest;
     setStatus('');
 
-    if (isEditing && !isAdjudicator) {
-      setStatus('Only an Adjudicator can update an existing company record.');
-      return;
-    }
-
     const error = validate();
     if (error) return setStatus(error);
 
-    localStorage.setItem('rbr_employee_name', employeeName.trim());
+    const effectiveEmployeeName = employeeName.trim() || employeeEmail || 'employee_portal';
+    localStorage.setItem('rbr_employee_name', effectiveEmployeeName);
     setSaving(true);
 
     try {
       const payload = {
-        ...buildPayload(form, employeeName.trim()),
+        ...buildPayload(form, effectiveEmployeeName),
         employee_email: employeeEmail,
-        updated_by: employeeEmail || employeeName.trim(),
+        updated_by: employeeEmail || effectiveEmployeeName,
       };
 
       // Associates create records. Only Cognito Adjudicators can reach edit mode.
@@ -954,11 +948,6 @@ function PortalApp() {
 
 
   function editCompany(item) {
-    if (!isAdjudicator) {
-      setStatus('Only an Adjudicator can update an existing company record.');
-      return;
-    }
-
     const normalized = normalizeCompanyRecord(item);
     setEditingCompanyId(normalized.company_id || '');
     setEntryRequest(null);
@@ -972,7 +961,7 @@ function PortalApp() {
 
     setShowAdvancedFields(false);
     setIsRecordModalOpen(true);
-    setStatus(`Adjudicator editing: ${item.company_name}`);
+    setStatus(`Editing company: ${item.company_name}`);
   }
 
   async function deactivateCompany(item) {
@@ -1570,16 +1559,16 @@ function PortalApp() {
                               <div><span>type</span><p>{item.type || '-'}</p></div>
                               <div><span>record_completeness</span><p><span className={`status-pill ${statusClass(percent)}`}>{statusLabel(percent)} · {percent}%</span></p></div>
                               <div className="details-actions">
-                                {isAdjudicator ? (
-                                  <div style={{ display: 'flex', gap: 10, width: '100%', flexWrap: 'wrap' }}>
-                                    <button
-                                      type="button"
-                                      className="filter-button"
-                                      onClick={() => editCompany(item)}
-                                      style={{ flex: '1 1 170px' }}
-                                    >
-                                      <Pencil size={15} /> Edit Record
-                                    </button>
+                                <div style={{ display: 'flex', gap: 10, width: '100%', flexWrap: 'wrap' }}>
+                                  <button
+                                    type="button"
+                                    className="filter-button"
+                                    onClick={() => editCompany(item)}
+                                    style={{ flex: '1 1 170px' }}
+                                  >
+                                    <Pencil size={15} /> Update Record
+                                  </button>
+                                  {isAdjudicator && (
                                     <button
                                       type="button"
                                       className="secondary"
@@ -1595,12 +1584,8 @@ function PortalApp() {
                                       <Trash2 size={15} />
                                       {deactivatingCompanyId === item.company_id ? 'Deactivating...' : 'Deactivate'}
                                     </button>
-                                  </div>
-                                ) : (
-                                  <p style={{ margin: 0, color: '#68748a', textAlign: 'center' }}>
-                                    View only. Changes require an Adjudicator.
-                                  </p>
-                                )}
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -1855,27 +1840,18 @@ function PortalApp() {
               <div className="modal-head">
                 <div>
                   <h3 id="record-modal-title">
-                    {isEditing ? 'Adjudicator — Edit Company Record' : 'Add Company Record'}
+                    {isEditing ? 'Update Company Record' : 'Add Company Record'}
                   </h3>
                   <p>
                     {isEditing
-                      ? 'Only Adjudicators can change an existing company. The company ID remains permanent.'
-                      : 'Enter the key company details. The company ID is generated automatically when saved.'}
+                      ? 'Update the company details below. More fields can be added later without losing this record.'
+                      : 'For now, only the company name and phone number are required. More details can be added later.'}
                   </p>
                 </div>
                 <button type="button" className="modal-close" onClick={closeRecordModal} aria-label="Close popup">
                   <XCircle size={22} />
                 </button>
               </div>
-
-              <label className="employee-label">
-                Employee Name
-                <input
-                  value={employeeName}
-                  onChange={(e) => setEmployeeName(e.target.value)}
-                  placeholder="Example: Rajan / Priya"
-                />
-              </label>
 
               <form onSubmit={saveCompany} className="modal-form">
                 {entryRequest && (
@@ -1884,85 +1860,33 @@ function PortalApp() {
                     <div className="mini-preview-grid">
                       <p><b>Product:</b> {entryRequest.product}</p>
                       <p><b>Country:</b> {entryRequest.country}</p>
-                      <p><b>Target:</b> {entryRequest.target_companies} companies</p>
-                      <p><b>Request ID:</b> {entryRequest.request_id}</p>
                     </div>
                   </div>
                 )}
-                <label>company_id<input value={form.company_id} placeholder="Generated automatically when saved" readOnly /></label>
-                <label>type
-                  <select value={form.type} onChange={(e) => setField('type', e.target.value)}>
-                    {companyTypes.map((t) => <option key={t}>{t}</option>)}
-                  </select>
+
+                <label className="span2">
+                  Company Name *
+                  <input
+                    value={form.company_name}
+                    onChange={(e) => setField('company_name', e.target.value)}
+                    placeholder="Enter company name"
+                    autoFocus
+                  />
                 </label>
-                <label>country *<input value={form.country} onChange={(e) => setField('country', e.target.value)} placeholder="Malaysia" readOnly={Boolean(entryRequest && !isEditing)} /></label>
-                <label>product *<input value={form.product} onChange={(e) => setField('product', e.target.value)} placeholder="Readymade Garments" readOnly={Boolean(entryRequest && !isEditing)} /></label>
-                <label className="span2">company_name *<input value={form.company_name} onChange={(e) => setField('company_name', e.target.value)} placeholder="Padini Holdings Berhad" /></label>
-                <label className="span2">brands<textarea value={form.brands} onChange={(e) => setField('brands', e.target.value)} rows="2" placeholder="Padini, Seed, Vincci, PDI" /></label>
-                <label>email<input value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder="purchasing@example.com" /></label>
-                <label>phone<input value={form.phone} onChange={(e) => setField('phone', e.target.value)} placeholder="+60350211388" /></label>
-                <label className="span2">supply_requested<textarea value={form.supply_requested} onChange={(e) => setField('supply_requested', e.target.value)} rows="2" placeholder="budget fashion, private label garments, seasonal collections" /></label>
-                <label className="span2">company_briefing<textarea value={form.company_briefing} onChange={(e) => setField('company_briefing', e.target.value)} rows="3" placeholder="Large fashion retail group in Malaysia." /></label>
 
-                <button type="button" className="advanced-toggle span2" onClick={() => setShowAdvancedFields((value) => !value)}>
-                  {showAdvancedFields ? 'Hide Additional Details' : 'Show Additional Details'}
-                </button>
-
-                {showAdvancedFields && (
-                  <div className="advanced-fields span2">
-                    <label>Website<input value={form.website} onChange={(e) => setField('website', e.target.value)} placeholder="https://example.com" /></label>
-                    <label>City<input value={form.city} onChange={(e) => setField('city', e.target.value)} placeholder="Kuala Lumpur" /></label>
-                    <label className="span2">Address<textarea value={form.address} onChange={(e) => setField('address', e.target.value)} rows="2" /></label>
-                    <label>Priority
-                      <select value={form.priority} onChange={(e) => setField('priority', e.target.value)}>
-                        <option value="1">1 - Highest</option>
-                        <option value="2">2 - High</option>
-                        <option value="3">3 - Normal</option>
-                        <option value="4">4 - Low</option>
-                        <option value="5">5 - Lowest</option>
-                      </select>
-                    </label>
-                    <label>Contact Person<input value={form.contact_person} onChange={(e) => setField('contact_person', e.target.value)} /></label>
-                    <label>Designation<input value={form.designation} onChange={(e) => setField('designation', e.target.value)} /></label>
-                    <label>Imports From India
-                      <select value={form.imports_from_india} onChange={(e) => setField('imports_from_india', e.target.value)}>
-                        <option>Unknown</option>
-                        <option>Yes</option>
-                        <option>Likely</option>
-                        <option>No</option>
-                      </select>
-                    </label>
-                    <label>Source Name<input value={form.source_name} onChange={(e) => setField('source_name', e.target.value)} placeholder="Company website / Directory / Employee research" /></label>
-                    <label className="span2">Source URL<input value={form.source_url} onChange={(e) => setField('source_url', e.target.value)} placeholder="https://..." /></label>
-                    <label className="span2">Internal Notes<textarea value={form.notes} onChange={(e) => setField('notes', e.target.value)} rows="2" /></label>
-                    <label className="toggle"><input type="checkbox" checked={form.verified} onChange={(e) => setField('verified', e.target.checked)} /> Verified</label>
-                    {isAdjudicator && isEditing && (
-                      <label className="toggle">
-                        <input
-                          type="checkbox"
-                          checked={form.active}
-                          onChange={(e) => setField('active', e.target.checked)}
-                        />
-                        Active
-                      </label>
-                    )}
-                  </div>
-                )}
-
-                <div className="mini-preview span2">
-                  <h4><BarChart3 size={17} /> Auto Generated Keys</h4>
-                  <div className="mini-preview-grid">
-                    <p><b>product_country_key:</b> {preview.product_country_key || '-'}</p>
-                    <p><b>country_key:</b> {preview.country_key || '-'}</p>
-                    <p><b>product_key:</b> {preview.product_key || '-'}</p>
-                    <p><b>company_key:</b> {preview.company_key || '-'}</p>
-                  </div>
-                </div>
+                <label className="span2">
+                  Company Phone Number *
+                  <input
+                    value={form.phone}
+                    onChange={(e) => setField('phone', e.target.value)}
+                    placeholder="Enter phone number"
+                  />
+                </label>
 
                 <div className="modal-actions span2">
                   <button type="button" className="secondary" onClick={closeRecordModal} disabled={saving}>Cancel</button>
                   <button className="primary" disabled={saving}>
-                    <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Save Adjudicator Changes' : 'Save New Record'}
+                    <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Record' : 'Save Record'}
                   </button>
                 </div>
               </form>
