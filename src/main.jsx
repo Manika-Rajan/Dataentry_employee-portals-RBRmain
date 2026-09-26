@@ -345,6 +345,31 @@ function normalizeCompanyRecord(item = {}) {
   };
 }
 
+// Show company records created on or after 26 Sep 2026 (00:00 IST).
+// 26 Sep 2026 00:00 IST = 25 Sep 2026 18:30 UTC.
+const COMPANY_TABLE_CREATED_CUTOFF = Date.parse('2026-09-25T18:30:00.000Z');
+
+function getCompanyCreatedTimestamp(item = {}) {
+  const rawCreatedAt =
+    item.created_at ||
+    item.createdAt ||
+    item.created_on ||
+    item.createdOn ||
+    item.added_at ||
+    item.addedAt ||
+    '';
+
+  if (!rawCreatedAt) return Number.NaN;
+
+  const timestamp = Date.parse(rawCreatedAt);
+  return Number.isFinite(timestamp) ? timestamp : Number.NaN;
+}
+
+function wasCompanyCreatedSinceCutoff(item = {}) {
+  const timestamp = getCompanyCreatedTimestamp(item);
+  return Number.isFinite(timestamp) && timestamp >= COMPANY_TABLE_CREATED_CUTOFF;
+}
+
 function normalizeRequestRecord(item = {}, index = 0) {
   const product = item.product || item.product_name || titleFromKeyPart(item.product_key);
   const country = item.country || item.country_name || titleFromKeyPart(item.country_key);
@@ -546,6 +571,11 @@ function PortalApp() {
     try {
       const payload = {
         ...buildPayload(form, effectiveEmployeeName),
+        // New records get an explicit creation timestamp. Existing records keep
+        // their original creation timestamp when they are updated later.
+        created_at: isEditing
+          ? (form.created_at || form.createdAt || form.created_on || form.createdOn || form.added_at || form.addedAt || '')
+          : new Date().toISOString(),
         employee_email: employeeEmail,
         updated_by: employeeEmail || effectiveEmployeeName,
       };
@@ -603,16 +633,17 @@ function PortalApp() {
       const data = await apiFetch(`${COMPANY_API_URL}${queryString ? `?${queryString}` : ''}`);
       const items = (data.items || [])
         .map(normalizeCompanyRecord)
-        .filter((item) => item.active !== false);
+        .filter((item) => item.active !== false)
+        .filter(wasCompanyCreatedSinceCutoff);
 
       setResults(items);
       setHasLoadedRecords(true);
       setExpandedCompanyId('');
 
       if (!items.length) {
-        setStatus(mode === 'initial' ? 'No company records found in DynamoDB yet.' : 'No matching companies found.');
+        setStatus(mode === 'initial' ? 'No company records created since 26 Sep 2026 were found.' : 'No matching companies found.');
       } else if (mode === 'initial') {
-        setStatus(`Loaded ${items.length} company record${items.length === 1 ? '' : 's'} from DynamoDB.`);
+        setStatus(`Loaded ${items.length} company record${items.length === 1 ? '' : 's'} created since 26 Sep 2026.`);
       }
     } catch (err) {
       setStatus(err.message || 'Company records could not be loaded.');
