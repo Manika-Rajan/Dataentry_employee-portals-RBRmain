@@ -49,6 +49,13 @@ const API_ROOT = RAW_API_BASE
 
 const COMPANY_API_URL = `${API_ROOT}/employee-data-entry`;
 const REQUESTS_API_URL = `${API_ROOT}/employee-data-entry-requests`;
+// Shared, hardcoded choices. To publish admin edits for all employees,
+// replace this constant with the exported settings and redeploy Amplify.
+const HARD_CODED_OPTIONS = {
+  countries: ['India', 'United States', 'United Kingdom', 'United Arab Emirates', 'Germany', 'Malaysia', 'Singapore', 'Australia', 'Canada', 'Saudi Arabia'],
+  industries: ['Agriculture', 'Automotive', 'Chemicals', 'Construction', 'Education', 'Electronics', 'Energy', 'Food & Beverages', 'Healthcare', 'Information Technology', 'Manufacturing', 'Pharmaceuticals', 'Retail', 'Textiles', 'Transportation & Logistics'],
+};
+const ADMIN_EMAIL = 'manikya93@gmail.com';
 const PORTAL_KEY = import.meta.env.VITE_EMPLOYEE_PORTAL_KEY || '';
 
 const companyTypes = ['Importer', 'Retail Chain', 'Retailer', 'Distributor', 'Buying House', 'Wholesaler', 'Sourcing Agent', 'Agent', 'Ecommerce', 'Manufacturer', 'Other'];
@@ -56,7 +63,8 @@ const companyTypes = ['Importer', 'Retail Chain', 'Retailer', 'Distributor', 'Bu
 const emptyForm = {
   company_id: '',
   company_name: '',
-  country: 'Unassigned',
+  country: '',
+  industry: '',
   product: 'Unassigned',
   company_briefing: '',
   brands: '',
@@ -122,6 +130,7 @@ function uploadPhaseTitle(phase) {
 const EXCEL_COLUMNS = [
   'company_name',
   'country',
+  'industry',
   'product',
   'type',
   'brands',
@@ -149,6 +158,7 @@ const EXCEL_HEADER_ALIASES = {
   companyname: 'company_name',
   company_name: 'company_name',
   country: 'country',
+  industry: 'industry',
   product: 'product',
   productcategory: 'product',
   product_category: 'product',
@@ -503,7 +513,6 @@ function PortalApp() {
   const employeeEmail = auth.user?.profile?.email || '';
   // The only portal administrator. Cognito group membership does not grant
   // administration in this UI; all other authenticated users are associates.
-  const ADMIN_EMAIL = 'manikya93@gmail.com';
   const isAdjudicator = String(employeeEmail).trim().toLowerCase() === ADMIN_EMAIL;
 
   const employeeDisplayName =
@@ -546,6 +555,16 @@ function PortalApp() {
   const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0 });
   const [uploadSummary, setUploadSummary] = useState(null);
   const [uploadPhase, setUploadPhase] = useState('idle');
+  const [dropdownOptions, setDropdownOptions] = useState(() => ({
+    countries: [...HARD_CODED_OPTIONS.countries],
+    industries: [...HARD_CODED_OPTIONS.industries],
+  }));
+  const [optionDrafts, setOptionDrafts] = useState(() => ({
+    countries: [...HARD_CODED_OPTIONS.countries],
+    industries: [...HARD_CODED_OPTIONS.industries],
+  }));
+  const [newOption, setNewOption] = useState({ countries: '', industries: '' });
+  const [optionsMessage, setOptionsMessage] = useState('');
 
   const isEditing = Boolean(editingCompanyId);
   const preview = useMemo(() => buildPayload(form, employeeName), [form, employeeName]);
@@ -553,6 +572,48 @@ function PortalApp() {
   useEffect(() => {
     loadCompanies({}, 'initial');
   }, []);
+
+  function resetDropdownDrafts() {
+    setOptionDrafts({ countries: [...HARD_CODED_OPTIONS.countries], industries: [...HARD_CODED_OPTIONS.industries] });
+    setDropdownOptions({ countries: [...HARD_CODED_OPTIONS.countries], industries: [...HARD_CODED_OPTIONS.industries] });
+    setOptionsMessage('Restored the currently deployed dropdown choices.');
+  }
+
+  function addDropdownOption(key) {
+    const value = newOption[key].trim().replace(/\s+/g, ' ');
+    if (!value) return;
+    if (optionDrafts[key].some((item) => item.toLowerCase() === value.toLowerCase())) {
+      setOptionsMessage(`${value} is already in the ${key} list.`);
+      return;
+    }
+    setOptionDrafts((prev) => ({ ...prev, [key]: [...prev[key], value].sort((a, b) => a.localeCompare(b)) }));
+    setNewOption((prev) => ({ ...prev, [key]: '' }));
+    setOptionsMessage('Changes are only a draft until you export and deploy them.');
+  }
+
+  function exportDropdownOptions() {
+    if (!isAdjudicator) return;
+    const cleaned = {};
+    for (const key of ['countries', 'industries']) {
+      const values = optionDrafts[key].map((value) => value.trim().replace(/\s+/g, ' ')).filter(Boolean);
+      if (!values.length || new Set(values.map((value) => value.toLowerCase())).size !== values.length) {
+        setOptionsMessage(`Please keep at least one unique, non-empty choice in ${key}.`);
+        return;
+      }
+      cleaned[key] = values;
+    }
+    setDropdownOptions(cleaned); // Preview changes in this admin tab only.
+    const content = `const HARD_CODED_OPTIONS = ${JSON.stringify(cleaned, null, 2)};\n`;
+    const objectUrl = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = 'RBR_Hardcoded_Dropdown_Lists.txt';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+    setOptionsMessage('Exported. Replace HARD_CODED_OPTIONS at the top of main.jsx with the downloaded constant, then redeploy Amplify. Employees will see the new list after deployment.');
+  }
 
   async function signOutRedirect() {
     await auth.removeUser();
@@ -571,6 +632,11 @@ function PortalApp() {
   function validate() {
     if (!form.company_name.trim()) return 'Company name is mandatory.';
     if (!form.phone.trim()) return 'Company phone number is mandatory.';
+    if (!form.country.trim()) return 'Please select a Country Name.';
+    if (!form.industry.trim()) return 'Please select an Industry.';
+    if (!dropdownOptions.countries.includes(form.country) || !dropdownOptions.industries.includes(form.industry)) {
+      return 'The selected Country Name or Industry is not in the approved dropdown list. Reload the page and select again.';
+    }
     return '';
   }
 
@@ -1268,7 +1334,7 @@ function PortalApp() {
             </button>
           </div>}
           {isAdjudicator && <button type="button" className="nav-item"><FileText size={21} /> Reports</button>}
-          {isAdjudicator && <button type="button" className="nav-item"><Settings size={21} /> Settings</button>}
+          {isAdjudicator && <button type="button" className={`nav-item ${activeView === 'settings' ? 'active' : ''}`} onClick={() => { setActiveView('settings'); setOptionsMessage(''); }}><Settings size={21} /> Dropdown Settings</button>}
         </nav>
 
         <button type="button" className="nav-item logout" onClick={signOutRedirect}>
@@ -1279,12 +1345,14 @@ function PortalApp() {
       <main className="dashboard-main">
         <header className="dashboard-topbar">
           <div>
-            <h1>{activeView === 'requests' ? 'Import Company Collection Requests' : activeView === 'myRecords' ? 'Record Submission' : activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
+            <h1>{activeView === 'requests' ? 'Import Company Collection Requests' : activeView === 'myRecords' ? 'Record Submission' : activeView === 'settings' ? 'Dropdown Settings' : activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
             <p>
               {activeView === 'requests'
                 ? 'Create one product request across multiple countries, track the target for each country, and open a prefilled company-entry form for associates.'
                 : activeView === 'myRecords'
                   ? 'Add company records and review the records you submitted today.'
+                : activeView === 'settings'
+                  ? 'Manage the Country Name and Industry choices available in the employee Add Record form.'
                 : activeView === 'completedRecords'
                   ? 'This segment shows only the records marked as completed from the company records currently displayed in the portal.'
                   : 'Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.'}
@@ -1309,6 +1377,50 @@ function PortalApp() {
             </div>
           </div>
         </header>
+
+        {isAdjudicator && activeView === 'settings' && (
+          <section className="panel" style={{ padding: 24, marginBottom: 22 }}>
+            <h3>Manage Add Record Dropdowns</h3>
+            <p>Edit the lists here, then export the updated values and replace HARD_CODED_OPTIONS in the React source before deploying. Changes are not shared until deployment.</p>
+            <div className="modal-form" style={{ marginTop: 20 }}>
+                {[
+                  { key: 'countries', title: 'Country Name' },
+                  { key: 'industries', title: 'Industry' },
+                ].map(({ key, title }) => (
+                  <div key={key} style={{ minWidth: 0 }}>
+                    <h4>{title} choices ({optionDrafts[key].length})</h4>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                      <input aria-label={`Add ${title}`} placeholder={`Enter new ${title.toLowerCase()}`}
+                        value={newOption[key]}
+                        onChange={(e) => setNewOption((prev) => ({ ...prev, [key]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDropdownOption(key); } }} />
+                      <button type="button" className="secondary" onClick={() => addDropdownOption(key)}><Plus size={16} /> Add</button>
+                    </div>
+                    <div style={{ maxHeight: 330, overflowY: 'auto', display: 'grid', gap: 8 }}>
+                      {optionDrafts[key].map((value, index) => (
+                        <div key={`${key}-${index}`} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <input aria-label={`Edit ${title} ${value}`} value={value}
+                            onChange={(e) => setOptionDrafts((prev) => ({ ...prev, [key]: prev[key].map((item, i) => i === index ? e.target.value : item) }))} />
+                          <button type="button" className="secondary" title={`Remove ${value}`} aria-label={`Remove ${value}`}
+                            onClick={() => setOptionDrafts((prev) => ({ ...prev, [key]: prev[key].filter((_, i) => i !== index) }))}>
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      ))}
+                      {!optionDrafts[key].length && <p>No choices yet. Add one above.</p>}
+                    </div>
+                  </div>
+                ))}
+                <div className="span2" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button type="button" className="primary" onClick={exportDropdownOptions}>
+                    <Save size={18} /> Export Lists for Deployment
+                  </button>
+                  <button type="button" className="secondary" onClick={resetDropdownDrafts}>Restore deployed lists</button>
+                  {optionsMessage && <p role="status">{optionsMessage}</p>}
+                </div>
+              </div>
+          </section>
+        )}
 
         {activeView === 'dashboard' && isAdjudicator && (
           <>
@@ -1967,7 +2079,7 @@ function PortalApp() {
                   <p>
                     {isEditing
                       ? 'Update the company details below. More fields can be added later without losing this record.'
-                      : 'For now, only the company name and phone number are required. More details can be added later.'}
+                      : 'Enter the company name and phone number, then select the country and industry.'}
                   </p>
                 </div>
                 <button type="button" className="modal-close" onClick={closeRecordModal} aria-label="Close popup">
@@ -2005,9 +2117,30 @@ function PortalApp() {
                   />
                 </label>
 
+                <label className="span2">
+                  Country Name *
+                  <select required value={form.country} 
+                    onChange={(e) => setField('country', e.target.value)}>
+                    <option value="">Select country</option>
+                    {dropdownOptions.countries.map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+
+                <label className="span2">
+                  Industry *
+                  <select required value={form.industry} 
+                    onChange={(e) => setField('industry', e.target.value)}>
+                    <option value="">Select industry</option>
+                    {dropdownOptions.industries.map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                {(!dropdownOptions.countries.length || !dropdownOptions.industries.length) && (
+                  <p className="status-message span2">Country and Industry lists must contain at least one option in the React source.</p>
+                )}
+
                 <div className="modal-actions span2">
                   <button type="button" className="secondary" onClick={closeRecordModal} disabled={saving}>Cancel</button>
-                  <button className="primary" disabled={saving}>
+                  <button className="primary" disabled={saving || !dropdownOptions.countries.length || !dropdownOptions.industries.length}>
                     <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Record' : 'Save Record'}
                   </button>
                 </div>
