@@ -370,6 +370,22 @@ function wasCompanyCreatedSinceCutoff(item = {}) {
   return Number.isFinite(timestamp) && timestamp >= COMPANY_TABLE_CREATED_CUTOFF;
 }
 
+// Use the employee identity and the calendar day in India, not UTC.
+function indiaDateKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date);
+}
+
+function isMyRecordToday(item, employeeEmail) {
+  const email = String(employeeEmail || '').trim().toLowerCase();
+  const creatorEmail = String(item.employee_email || item.created_by_email || '').trim().toLowerCase();
+  return Boolean(email && creatorEmail && email === creatorEmail &&
+    indiaDateKey(getCompanyCreatedTimestamp(item)) === indiaDateKey(new Date()));
+}
+
 function normalizeRequestRecord(item = {}, index = 0) {
   const product = item.product || item.product_name || titleFromKeyPart(item.product_key);
   const country = item.country || item.country_name || titleFromKeyPart(item.country_key);
@@ -485,10 +501,10 @@ function PortalApp() {
   const auth = useAuth();
 
   const employeeEmail = auth.user?.profile?.email || '';
-  const cognitoGroups = getCognitoGroups(auth.user?.profile || {});
-  const isAdjudicator = cognitoGroups.some(
-    (group) => group.toLowerCase() === 'adjudicator'
-  );
+  // The only portal administrator. Cognito group membership does not grant
+  // administration in this UI; all other authenticated users are associates.
+  const ADMIN_EMAIL = 'manikya93@gmail.com';
+  const isAdjudicator = String(employeeEmail).trim().toLowerCase() === ADMIN_EMAIL;
 
   const employeeDisplayName =
     auth.user?.profile?.name ||
@@ -507,7 +523,9 @@ function PortalApp() {
   const [hasLoadedRecords, setHasLoadedRecords] = useState(false);
   const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
-  const [activeView, setActiveView] = useState('dashboard');
+  const [activeView, setActiveView] = useState(isAdjudicator ? 'dashboard' : 'myRecords');
+  useEffect(() => { if (!isAdjudicator) setActiveView((view) => ['dashboard', 'completedRecords'].includes(view) ? 'myRecords' : view); }, [isAdjudicator]);
+  const [saveNotice, setSaveNotice] = useState(null);
   const [entryRequest, setEntryRequest] = useState(null);
   const [requests, setRequests] = useState([]);
   const [requestForm, setRequestForm] = useState(emptyRequestForm);
@@ -560,6 +578,7 @@ function PortalApp() {
     e.preventDefault();
     const linkedRequest = entryRequest;
     setStatus('');
+    setSaveNotice(null);
 
     const error = validate();
     if (error) return setStatus(error);
@@ -588,6 +607,12 @@ function PortalApp() {
       });
 
       setStatus(isEditing ? 'Company updated successfully.' : 'Company saved successfully.');
+      setSaveNotice({
+        company: payload.company_name,
+        companyId: data.item?.company_id || data.company_id || '',
+        edited: isEditing,
+      });
+      if (!isAdjudicator) setActiveView('myRecords');
 
       if (data.item) {
         const normalizedItem = normalizeCompanyRecord(data.item);
@@ -611,6 +636,8 @@ function PortalApp() {
       setEntryRequest(null);
       setIsRecordModalOpen(false);
       setShowAdvancedFields(false);
+      // Reload from DynamoDB, rather than displaying the company's overall statistics.
+      if (!isAdjudicator) await loadCompanies({}, 'employee-refresh');
     } catch (err) {
       setStatus(err.message || 'Save failed.');
     } finally {
@@ -641,7 +668,7 @@ function PortalApp() {
       setExpandedCompanyId('');
 
       if (!items.length) {
-        setStatus(mode === 'initial' ? 'No company records created since 26 Sep 2026 were found.' : 'No matching companies found.');
+        if (mode !== 'employee-refresh') setStatus(mode === 'initial' ? 'No company records created since 26 Sep 2026 were found.' : 'No matching companies found.');
       } else if (mode === 'initial') {
         setStatus(`Loaded ${items.length} company record${items.length === 1 ? '' : 's'} created since 26 Sep 2026.`);
       }
@@ -689,6 +716,7 @@ function PortalApp() {
 
   async function saveCollectionRequest(e) {
     e.preventDefault();
+    if (!isAdjudicator) { setRequestMessage('Only the administrator can create collection requests.'); return; }
     setRequestMessage('');
     const error = validateRequest();
     if (error) return setRequestMessage(error);
@@ -979,6 +1007,7 @@ function PortalApp() {
 
 
   function editCompany(item) {
+    if (!isAdjudicator) { setStatus('Only the administrator can update company records.'); return; }
     const normalized = normalizeCompanyRecord(item);
     setEditingCompanyId(normalized.company_id || '');
     setEntryRequest(null);
@@ -1090,12 +1119,12 @@ function PortalApp() {
       status: '',
     };
     setQuery(nextQuery);
-    setActiveView('dashboard');
+    setActiveView(isAdjudicator ? 'dashboard' : 'myRecords');
     await loadCompanies(nextQuery, 'filter');
   }
 
   function openDashboard() {
-    setActiveView('dashboard');
+    setActiveView(isAdjudicator ? 'dashboard' : 'myRecords');
     setExpandedCompanyId('');
   }
 
@@ -1109,6 +1138,7 @@ function PortalApp() {
   }
 
   function openCompletedRecords() {
+    if (!isAdjudicator) { setActiveView('myRecords'); return; }
     setActiveView('completedRecords');
     setExpandedCompanyId('');
   }
@@ -1148,6 +1178,11 @@ function PortalApp() {
 
     return { total, completed, inProgress, notStarted, average, bucketDefs };
   }, [displayedResults]);
+
+  const myTodayRecords = useMemo(
+    () => results.filter((item) => isMyRecordToday(item, employeeEmail)),
+    [results, employeeEmail]
+  );
 
   const completedRecords = useMemo(() => {
     return displayedResults.filter((item) => companyCompletionPercent(item) >= 100);
@@ -1209,11 +1244,16 @@ function PortalApp() {
         </div>
 
         <nav className="sidebar-nav">
-          <button type="button" className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`} onClick={openDashboard}>
-            <LayoutDashboard size={21} /> Dashboard
+          {isAdjudicator && (
+            <button type="button" className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`} onClick={openDashboard}>
+              <LayoutDashboard size={21} /> Dashboard
+            </button>
+          )}
+          <button type="button" className={`nav-item ${activeView === 'myRecords' ? 'active' : ''}`} onClick={() => { setActiveView('myRecords'); setExpandedCompanyId(''); loadCompanies({}, 'employee-refresh'); }}>
+            <Database size={21} /> Record Submission
           </button>
           <button type="button" className={`nav-item ${activeView === 'requests' ? 'active' : ''}`} onClick={openRequests}><ClipboardList size={21} /> Requests</button>
-          <div className="nav-group">
+          {isAdjudicator && <div className="nav-group">
             <button type="button" className={`nav-item ${activeView === 'completedRecords' ? 'parent-active' : ''}`}>
               <Users size={21} /> Associates
             </button>
@@ -1226,10 +1266,9 @@ function PortalApp() {
               <span>Completed Records</span>
               <em>{dashboard.completed}</em>
             </button>
-          </div>
-          <button type="button" className="nav-item"><FileText size={21} /> Reports</button>
-          <button type="button" className="nav-item"><Database size={21} /> Data Entry</button>
-          <button type="button" className="nav-item"><Settings size={21} /> Settings</button>
+          </div>}
+          {isAdjudicator && <button type="button" className="nav-item"><FileText size={21} /> Reports</button>}
+          {isAdjudicator && <button type="button" className="nav-item"><Settings size={21} /> Settings</button>}
         </nav>
 
         <button type="button" className="nav-item logout" onClick={signOutRedirect}>
@@ -1240,10 +1279,12 @@ function PortalApp() {
       <main className="dashboard-main">
         <header className="dashboard-topbar">
           <div>
-            <h1>{activeView === 'requests' ? 'Import Company Collection Requests' : activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
+            <h1>{activeView === 'requests' ? 'Import Company Collection Requests' : activeView === 'myRecords' ? 'Record Submission' : activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
             <p>
               {activeView === 'requests'
                 ? 'Create one product request across multiple countries, track the target for each country, and open a prefilled company-entry form for associates.'
+                : activeView === 'myRecords'
+                  ? 'Add company records and review the records you submitted today.'
                 : activeView === 'completedRecords'
                   ? 'This segment shows only the records marked as completed from the company records currently displayed in the portal.'
                   : 'Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.'}
@@ -1269,7 +1310,7 @@ function PortalApp() {
           </div>
         </header>
 
-        {activeView === 'dashboard' && (
+        {activeView === 'dashboard' && isAdjudicator && (
           <>
                     <section className="stats-grid">
                       <div className="stat-card">
@@ -1372,9 +1413,9 @@ function PortalApp() {
                   <p style={{ margin: '6px 0 0', color: '#667085' }}>Each country becomes a separate trackable request under the selected product.</p>
                 </div>
                 <div className="table-actions">
-                  <button type="button" className="add-record-button" onClick={() => { setRequestForm(emptyRequestForm); setIsRequestModalOpen(true); setRequestMessage(''); }}>
+                  {isAdjudicator && <button type="button" className="add-record-button" onClick={() => { setRequestForm(emptyRequestForm); setIsRequestModalOpen(true); setRequestMessage(''); }}>
                     <Plus size={17} /> New Request
-                  </button>
+                  </button>}
                   <button type="button" className="export-button" onClick={() => loadRequests('open')} disabled={loadingRequests}>
                     <RefreshCw size={17} /> {loadingRequests ? 'Refreshing...' : 'Refresh'}
                   </button>
@@ -1469,7 +1510,7 @@ function PortalApp() {
           </>
         )}
 
-        {activeView === 'completedRecords' && (
+        {isAdjudicator && activeView === 'completedRecords' && (
           <section className="panel completed-records-intro">
             <div>
               <h3><CheckCircle2 size={20} /> Completed Records</h3>
@@ -1482,7 +1523,57 @@ function PortalApp() {
           </section>
         )}
 
-        {activeView !== 'requests' && (
+        {activeView === 'myRecords' && (
+          <section className="panel requests-panel">
+            <div className="section-title-row">
+              <div>
+                <h3>My Records Submitted Today</h3>
+                <p style={{ margin: '6px 0 0', color: '#667085' }}>
+                  {indiaDateKey(new Date())} (India time) · {myTodayRecords.length} record{myTodayRecords.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <div className="table-actions">
+                <button type="button" className="add-record-button" onClick={newCompany}><Plus size={17} /> Add Record</button>
+                <button type="button" className="export-button" onClick={() => loadCompanies({}, 'employee-refresh')} disabled={loading}>
+                  <RefreshCw size={17} /> {loading ? 'Refreshing...' : 'Refresh'}
+                </button>
+              </div>
+            </div>
+            {saveNotice && (
+              <div role="status" style={{ background: '#ecfdf3', border: '1px solid #a6f4c5', color: '#067647', borderRadius: 12, padding: '16px 18px', marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                <CheckCircle2 size={24} />
+                <div style={{ flex: 1 }}>
+                  <b>{saveNotice.edited ? 'Record updated successfully!' : 'Record added successfully!'}</b>
+                  <p style={{ margin: '4px 0 0' }}>{saveNotice.company}{saveNotice.companyId ? ` · ID: ${saveNotice.companyId}` : ''}</p>
+                </div>
+                <button type="button" aria-label="Dismiss confirmation" onClick={() => setSaveNotice(null)} style={{ background: 'none', border: 0, cursor: 'pointer' }}><XCircle size={19} /></button>
+              </div>
+            )}
+            {!employeeEmail && <p role="alert" className="status-message">Your login has no email claim. Contact the administrator to enable employee record tracking.</p>}
+            <div className="table-wrap">
+              <table className="data-table company-records-table">
+                <thead><tr><th>#</th><th>Company ID</th><th>Company Name</th><th>Phone Number</th><th>Submitted At (IST)</th><th>Status</th></tr></thead>
+                <tbody>
+                  {myTodayRecords.map((item, index) => (
+                    <tr key={recordKey(item, index)}>
+                      <td>{index + 1}</td>
+                      <td>{item.company_id || '-'}</td>
+                      <td><b>{item.company_name || '-'}</b></td>
+                      <td>{item.phone || '-'}</td>
+                      <td>{new Date(getCompanyCreatedTimestamp(item)).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}</td>
+                      <td><span className="status-pill status-completed">Saved</span></td>
+                    </tr>
+                  ))}
+                  {!myTodayRecords.length && (
+                    <tr><td colSpan="6" className="empty-table">{loading ? 'Loading today’s entries...' : 'No records submitted with this login today. Select Add Record to begin.'}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {isAdjudicator && activeView !== 'requests' && activeView !== 'myRecords' && (
         <section className="panel requests-panel">
           <div className="section-title-row">
             <h3>{tableTitle}</h3>
