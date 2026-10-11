@@ -53,7 +53,136 @@ const REQUESTS_API_URL = `${API_ROOT}/employee-data-entry-requests`;
 // replace this constant with the exported settings and redeploy Amplify.
 const HARD_CODED_OPTIONS = {
   countries: ['India', 'United States', 'United Kingdom', 'United Arab Emirates', 'Germany', 'Malaysia', 'Singapore', 'Australia', 'Canada', 'Saudi Arabia'],
-  industries: ['Agriculture', 'Automotive', 'Chemicals', 'Construction', 'Education', 'Electronics', 'Energy', 'Food & Beverages', 'Healthcare', 'Information Technology', 'Manufacturing', 'Pharmaceuticals', 'Retail', 'Textiles', 'Transportation & Logistics'],
+  products: ['Agricultural Products', 'Automobile Parts', 'Chemicals', 'Consulting Services', 'Electronics', 'Food Products', 'Garments', 'IT Services', 'Machinery', 'Medical Equipment', 'Pharmaceuticals', 'Textiles'],
+};
+// Edit these defaults (or export replacements from the admin panel) and redeploy to share changes.
+const HARD_CODED_FIELD_SETTINGS = {
+  "company_name": {
+    "label": "Company Name",
+    "type": "text",
+    "visible": true,
+    "required": true
+  },
+  "phone": {
+    "label": "Company Phone Number",
+    "type": "tel",
+    "visible": true,
+    "required": true
+  },
+  "country": {
+    "label": "Country Name",
+    "type": "countries",
+    "visible": true,
+    "required": true
+  },
+  "product": {
+    "label": "Product/Service",
+    "type": "products",
+    "visible": true,
+    "required": true
+  },
+  "email": {
+    "label": "Email",
+    "type": "email",
+    "visible": false,
+    "required": false
+  },
+  "website": {
+    "label": "Website",
+    "type": "url",
+    "visible": false,
+    "required": false
+  },
+  "address": {
+    "label": "Address",
+    "type": "textarea",
+    "visible": false,
+    "required": false
+  },
+  "city": {
+    "label": "City",
+    "type": "text",
+    "visible": false,
+    "required": false
+  },
+  "type": {
+    "label": "Company Type",
+    "type": "types",
+    "visible": false,
+    "required": false
+  },
+  "company_briefing": {
+    "label": "Company Briefing",
+    "type": "textarea",
+    "visible": false,
+    "required": false
+  },
+  "brands": {
+    "label": "Brands",
+    "type": "text",
+    "visible": false,
+    "required": false
+  },
+  "supply_requested": {
+    "label": "Supply Requested",
+    "type": "textarea",
+    "visible": false,
+    "required": false
+  },
+  "contact_person": {
+    "label": "Contact Person",
+    "type": "text",
+    "visible": false,
+    "required": false
+  },
+  "designation": {
+    "label": "Designation",
+    "type": "text",
+    "visible": false,
+    "required": false
+  },
+  "imports_from_india": {
+    "label": "Imports from India",
+    "type": "imports",
+    "visible": false,
+    "required": false
+  },
+  "source_name": {
+    "label": "Source Name",
+    "type": "text",
+    "visible": false,
+    "required": false
+  },
+  "source_url": {
+    "label": "Source URL",
+    "type": "url",
+    "visible": false,
+    "required": false
+  },
+  "notes": {
+    "label": "Notes",
+    "type": "textarea",
+    "visible": false,
+    "required": false
+  },
+  "priority": {
+    "label": "Priority",
+    "type": "priority",
+    "visible": false,
+    "required": false
+  },
+  "verified": {
+    "label": "Verified",
+    "type": "boolean",
+    "visible": false,
+    "required": false
+  },
+  "active": {
+    "label": "Active",
+    "type": "boolean",
+    "visible": false,
+    "required": false
+  }
 };
 const ADMIN_EMAIL = 'manikya93@gmail.com';
 const PORTAL_KEY = import.meta.env.VITE_EMPLOYEE_PORTAL_KEY || '';
@@ -64,8 +193,7 @@ const emptyForm = {
   company_id: '',
   company_name: '',
   country: '',
-  industry: '',
-  product: 'Unassigned',
+  product: '',
   company_briefing: '',
   brands: '',
   supply_requested: '',
@@ -557,13 +685,15 @@ function PortalApp() {
   const [uploadPhase, setUploadPhase] = useState('idle');
   const [dropdownOptions, setDropdownOptions] = useState(() => ({
     countries: [...HARD_CODED_OPTIONS.countries],
-    industries: [...HARD_CODED_OPTIONS.industries],
+    products: [...HARD_CODED_OPTIONS.products],
   }));
   const [optionDrafts, setOptionDrafts] = useState(() => ({
     countries: [...HARD_CODED_OPTIONS.countries],
-    industries: [...HARD_CODED_OPTIONS.industries],
+    products: [...HARD_CODED_OPTIONS.products],
   }));
-  const [newOption, setNewOption] = useState({ countries: '', industries: '' });
+  const [newOption, setNewOption] = useState({ countries: '', products: '' });
+  const [fieldSettings, setFieldSettings] = useState(() => JSON.parse(JSON.stringify(HARD_CODED_FIELD_SETTINGS)));
+  const [fieldDrafts, setFieldDrafts] = useState(() => JSON.parse(JSON.stringify(HARD_CODED_FIELD_SETTINGS)));
   const [optionsMessage, setOptionsMessage] = useState('');
 
   const isEditing = Boolean(editingCompanyId);
@@ -574,9 +704,11 @@ function PortalApp() {
   }, []);
 
   function resetDropdownDrafts() {
-    setOptionDrafts({ countries: [...HARD_CODED_OPTIONS.countries], industries: [...HARD_CODED_OPTIONS.industries] });
-    setDropdownOptions({ countries: [...HARD_CODED_OPTIONS.countries], industries: [...HARD_CODED_OPTIONS.industries] });
-    setOptionsMessage('Restored the currently deployed dropdown choices.');
+    setOptionDrafts({ countries: [...HARD_CODED_OPTIONS.countries], products: [...HARD_CODED_OPTIONS.products] });
+    setDropdownOptions({ countries: [...HARD_CODED_OPTIONS.countries], products: [...HARD_CODED_OPTIONS.products] });
+    setFieldDrafts(JSON.parse(JSON.stringify(HARD_CODED_FIELD_SETTINGS)));
+    setFieldSettings(JSON.parse(JSON.stringify(HARD_CODED_FIELD_SETTINGS)));
+    setOptionsMessage('Restored the deployed dropdown choices and field settings.');
   }
 
   function addDropdownOption(key) {
@@ -594,7 +726,7 @@ function PortalApp() {
   function exportDropdownOptions() {
     if (!isAdjudicator) return;
     const cleaned = {};
-    for (const key of ['countries', 'industries']) {
+    for (const key of ['countries', 'products']) {
       const values = optionDrafts[key].map((value) => value.trim().replace(/\s+/g, ' ')).filter(Boolean);
       if (!values.length || new Set(values.map((value) => value.toLowerCase())).size !== values.length) {
         setOptionsMessage(`Please keep at least one unique, non-empty choice in ${key}.`);
@@ -602,17 +734,20 @@ function PortalApp() {
       }
       cleaned[key] = values;
     }
-    setDropdownOptions(cleaned); // Preview changes in this admin tab only.
-    const content = `const HARD_CODED_OPTIONS = ${JSON.stringify(cleaned, null, 2)};\n`;
+    const validFields = Object.entries(fieldDrafts).filter(([, settings]) => settings.visible);
+    if (!validFields.length) { setOptionsMessage('Keep at least one visible field.'); return; }
+    setDropdownOptions(cleaned); // Preview in the current admin session.
+    setFieldSettings(JSON.parse(JSON.stringify(fieldDrafts)));
+    const content = `const HARD_CODED_OPTIONS = ${JSON.stringify(cleaned, null, 2)};\n\nconst HARD_CODED_FIELD_SETTINGS = ${JSON.stringify(fieldDrafts, null, 2)};\n`;
     const objectUrl = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
-    anchor.download = 'RBR_Hardcoded_Dropdown_Lists.txt';
+    anchor.download = 'RBR_Form_Configuration.txt';
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(objectUrl);
-    setOptionsMessage('Exported. Replace HARD_CODED_OPTIONS at the top of main.jsx with the downloaded constant, then redeploy Amplify. Employees will see the new list after deployment.');
+    setOptionsMessage('Exported both constants. Replace HARD_CODED_OPTIONS and HARD_CODED_FIELD_SETTINGS in main.jsx, then redeploy Amplify to apply to everyone.');
   }
 
   async function signOutRedirect() {
@@ -630,14 +765,45 @@ function PortalApp() {
   }
 
   function validate() {
-    if (!form.company_name.trim()) return 'Company name is mandatory.';
-    if (!form.phone.trim()) return 'Company phone number is mandatory.';
-    if (!form.country.trim()) return 'Please select a Country Name.';
-    if (!form.industry.trim()) return 'Please select an Industry.';
-    if (!dropdownOptions.countries.includes(form.country) || !dropdownOptions.industries.includes(form.industry)) {
-      return 'The selected Country Name or Industry is not in the approved dropdown list. Reload the page and select again.';
+    for (const [key, settings] of Object.entries(fieldSettings)) {
+      if (!settings.visible || !settings.required) continue;
+      const val = form[key];
+      if (typeof val !== 'boolean' && !String(val ?? '').trim()) return `${settings.label} is mandatory.`;
+    }
+    for (const [key, values] of [['country', dropdownOptions.countries], ['product', dropdownOptions.products]]) {
+      if (fieldSettings[key]?.visible && form[key] && !values.includes(form[key])) {
+        return `Please select a valid ${fieldSettings[key].label} option.`;
+      }
     }
     return '';
+  }
+
+  function renderConfiguredField(key, settings) {
+    if (!settings.visible) return null;
+    const label = `${settings.label}${settings.required ? ' *' : ''}`;
+    const value = form[key] ?? '';
+    let control;
+    if (settings.type === 'countries' || settings.type === 'products' || settings.type === 'types' || settings.type === 'imports' || settings.type === 'priority') {
+      const choices = settings.type === 'countries' ? dropdownOptions.countries
+        : settings.type === 'products' ? dropdownOptions.products
+        : settings.type === 'types' ? companyTypes
+        : settings.type === 'imports' ? ['Unknown', 'Yes', 'No']
+        : ['1', '2', '3', '4', '5'];
+      control = <select required={settings.required} value={value} onChange={(e) => setField(key, e.target.value)}>
+        <option value="">Select {settings.label}</option>
+        {choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
+      </select>;
+    } else if (settings.type === 'boolean') {
+      control = <select value={String(Boolean(value))} onChange={(e) => setField(key, e.target.value === 'true')}>
+        <option value="true">Yes</option><option value="false">No</option>
+      </select>;
+    } else if (settings.type === 'textarea') {
+      control = <textarea required={settings.required} value={value} onChange={(e) => setField(key, e.target.value)} rows={3} />;
+    } else {
+      control = <input type={settings.type} required={settings.required} value={value}
+        onChange={(e) => setField(key, e.target.value)} placeholder={`Enter ${settings.label.toLowerCase()}`} />;
+    }
+    return <label key={key} className="span2">{label}{control}</label>;
   }
 
   async function saveCompany(e) {
@@ -1334,7 +1500,7 @@ function PortalApp() {
             </button>
           </div>}
           {isAdjudicator && <button type="button" className="nav-item"><FileText size={21} /> Reports</button>}
-          {isAdjudicator && <button type="button" className={`nav-item ${activeView === 'settings' ? 'active' : ''}`} onClick={() => { setActiveView('settings'); setOptionsMessage(''); }}><Settings size={21} /> Dropdown Settings</button>}
+          {isAdjudicator && <button type="button" className={`nav-item ${activeView === 'settings' ? 'active' : ''}`} onClick={() => { setActiveView('settings'); setOptionsMessage(''); }}><Settings size={21} /> Form Settings</button>}
         </nav>
 
         <button type="button" className="nav-item logout" onClick={signOutRedirect}>
@@ -1345,14 +1511,14 @@ function PortalApp() {
       <main className="dashboard-main">
         <header className="dashboard-topbar">
           <div>
-            <h1>{activeView === 'requests' ? 'Import Company Collection Requests' : activeView === 'myRecords' ? 'Record Submission' : activeView === 'settings' ? 'Dropdown Settings' : activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
+            <h1>{activeView === 'requests' ? 'Import Company Collection Requests' : activeView === 'myRecords' ? 'Record Submission' : activeView === 'settings' ? 'Form Settings' : activeView === 'completedRecords' ? 'Completed Records' : 'RBR - Company Data Entry Dashboard'}</h1>
             <p>
               {activeView === 'requests'
                 ? 'Create one product request across multiple countries, track the target for each country, and open a prefilled company-entry form for associates.'
                 : activeView === 'myRecords'
                   ? 'Add company records and review the records you submitted today.'
                 : activeView === 'settings'
-                  ? 'Manage the Country Name and Industry choices available in the employee Add Record form.'
+                  ? 'Manage form field visibility, mandatory fields, and Country Name and Product/Service dropdowns.'
                 : activeView === 'completedRecords'
                   ? 'This segment shows only the records marked as completed from the company records currently displayed in the portal.'
                   : 'Company records are loaded from DynamoDB table rbrmain-import_export_companies. Each record should include company, contact, brands, supply requirement, and briefing details.'}
@@ -1380,12 +1546,12 @@ function PortalApp() {
 
         {isAdjudicator && activeView === 'settings' && (
           <section className="panel" style={{ padding: 24, marginBottom: 22 }}>
-            <h3>Manage Add Record Dropdowns</h3>
-            <p>Edit the lists here, then export the updated values and replace HARD_CODED_OPTIONS in the React source before deploying. Changes are not shared until deployment.</p>
+            <h3>Manage Add Record Form</h3>
+            <p>Choose fields to show or hide, mark them mandatory or optional, and edit the dropdown options. Export the configuration and redeploy React to publish it to all employees. Changes here alone are not shared.</p>
             <div className="modal-form" style={{ marginTop: 20 }}>
                 {[
                   { key: 'countries', title: 'Country Name' },
-                  { key: 'industries', title: 'Industry' },
+                  { key: 'products', title: 'Product/Service' },
                 ].map(({ key, title }) => (
                   <div key={key} style={{ minWidth: 0 }}>
                     <h4>{title} choices ({optionDrafts[key].length})</h4>
@@ -1411,9 +1577,30 @@ function PortalApp() {
                     </div>
                   </div>
                 ))}
+                <div className="span2" style={{ marginTop: 12 }}>
+                  <h4>Add Record — Field Controls</h4>
+                  <p style={{ margin: '8px 0 12px' }}>Switch off Show to hide a field. Required applies only to shown fields. Existing records are not deleted when a field is hidden.</p>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {Object.entries(fieldDrafts).map(([key, settings]) => (
+                      <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8, flexWrap: 'wrap' }}>
+                        <b>{settings.label}</b>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input type="checkbox" checked={settings.visible}
+                              onChange={(e) => setFieldDrafts((prev) => ({ ...prev, [key]: { ...prev[key], visible: e.target.checked } }))} /> Show
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input type="checkbox" checked={settings.required} disabled={!settings.visible}
+                              onChange={(e) => setFieldDrafts((prev) => ({ ...prev, [key]: { ...prev[key], required: e.target.checked } }))} /> Mandatory
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 <div className="span2" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button type="button" className="primary" onClick={exportDropdownOptions}>
-                    <Save size={18} /> Export Lists for Deployment
+                    <Save size={18} /> Export Form Configuration
                   </button>
                   <button type="button" className="secondary" onClick={resetDropdownDrafts}>Restore deployed lists</button>
                   {optionsMessage && <p role="status">{optionsMessage}</p>}
@@ -2079,7 +2266,7 @@ function PortalApp() {
                   <p>
                     {isEditing
                       ? 'Update the company details below. More fields can be added later without losing this record.'
-                      : 'Enter the company name and phone number, then select the country and industry.'}
+                      : 'Fill in the fields currently enabled by your administrator.'}
                   </p>
                 </div>
                 <button type="button" className="modal-close" onClick={closeRecordModal} aria-label="Close popup">
@@ -2098,49 +2285,15 @@ function PortalApp() {
                   </div>
                 )}
 
-                <label className="span2">
-                  Company Name *
-                  <input
-                    value={form.company_name}
-                    onChange={(e) => setField('company_name', e.target.value)}
-                    placeholder="Enter company name"
-                    autoFocus
-                  />
-                </label>
-
-                <label className="span2">
-                  Company Phone Number *
-                  <input
-                    value={form.phone}
-                    onChange={(e) => setField('phone', e.target.value)}
-                    placeholder="Enter phone number"
-                  />
-                </label>
-
-                <label className="span2">
-                  Country Name *
-                  <select required value={form.country} 
-                    onChange={(e) => setField('country', e.target.value)}>
-                    <option value="">Select country</option>
-                    {dropdownOptions.countries.map((value) => <option key={value} value={value}>{value}</option>)}
-                  </select>
-                </label>
-
-                <label className="span2">
-                  Industry *
-                  <select required value={form.industry} 
-                    onChange={(e) => setField('industry', e.target.value)}>
-                    <option value="">Select industry</option>
-                    {dropdownOptions.industries.map((value) => <option key={value} value={value}>{value}</option>)}
-                  </select>
-                </label>
-                {(!dropdownOptions.countries.length || !dropdownOptions.industries.length) && (
-                  <p className="status-message span2">Country and Industry lists must contain at least one option in the React source.</p>
+                {Object.entries(fieldSettings).map(([key, settings]) => renderConfiguredField(key, settings))}
+                {(['country', 'product'].some((key) => fieldSettings[key]?.visible &&
+                  !(key === 'country' ? dropdownOptions.countries : dropdownOptions.products).length)) && (
+                  <p className="status-message span2">A visible dropdown has no configured options. Ask the administrator to update and deploy its list.</p>
                 )}
 
                 <div className="modal-actions span2">
                   <button type="button" className="secondary" onClick={closeRecordModal} disabled={saving}>Cancel</button>
-                  <button className="primary" disabled={saving || !dropdownOptions.countries.length || !dropdownOptions.industries.length}>
+                  <button className="primary" disabled={saving || ['country', 'product'].some((key) => fieldSettings[key]?.visible && !(key === 'country' ? dropdownOptions.countries : dropdownOptions.products).length)}>
                     <Save size={18} />{saving ? 'Saving...' : isEditing ? 'Update Record' : 'Save Record'}
                   </button>
                 </div>
