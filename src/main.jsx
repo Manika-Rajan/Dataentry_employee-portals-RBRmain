@@ -52,8 +52,16 @@ const REQUESTS_API_URL = `${API_ROOT}/employee-data-entry-requests`;
 // Shared, hardcoded choices. To publish admin edits for all employees,
 // replace this constant with the exported settings and redeploy Amplify.
 const HARD_CODED_OPTIONS = {
-  countries: ['India', 'United States', 'United Kingdom', 'United Arab Emirates', 'Germany', 'Malaysia', 'Singapore', 'Australia', 'Canada', 'Saudi Arabia'],
-  products: ['Agricultural Products', 'Automobile Parts', 'Chemicals', 'Consulting Services', 'Electronics', 'Food Products', 'Garments', 'IT Services', 'Machinery', 'Medical Equipment', 'Pharmaceuticals', 'Textiles'],
+  "countries": [
+    "United States",
+    "United Kingdom",
+    "Europe",
+    "Global"
+  ],
+  "products": [
+    "Readymade Garments",
+    "Spices"
+  ]
 };
 // Edit these defaults (or export replacements from the admin panel) and redeploy to share changes.
 const HARD_CODED_FIELD_SETTINGS = {
