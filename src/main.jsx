@@ -54,6 +54,7 @@ const REQUESTS_API_URL = `${API_ROOT}/employee-data-entry-requests`;
 const HARD_CODED_OPTIONS = {
   "countries": [
     "United States",
+    "Malaysia",
     "United Kingdom",
     "Europe",
     "Global"
